@@ -5,13 +5,3 @@ builder = "NIXPACKS"
 numReplicas = 1
 sleepApplication = false
 restartPolicyType = "ON_FAILURE"
-
-[[services]]
-name = "tbg-rag-backend"
-
-[services.source]
-type = "GitHub"
-
-[services.variables]
-PORT = "8000"
-PYTHONPATH = "/app"
