@@ -4,7 +4,7 @@
 - [ ] **Install python-magic properly** - Currently using file extension fallback
   - Warning: `WARNING:root:python-magic not available, using extension-based file type detection`
   - Solution: Need to install libmagic system library for Railway deployment
-  
+
 - [ ] **Install PyMuPDF for PDF processing** - Currently PDF extraction is disabled
   - Warning: `WARNING:root:PyMuPDF not available, PDF extraction disabled`
   - Solution: Use the PyMuPDF installation notes provided earlier for proper setup
@@ -42,7 +42,7 @@
 
 ## 🚀 Feature Enhancements
 - [ ] Add proper PDF text extraction support
-- [ ] Add DOCX text extraction support  
+- [ ] Add DOCX text extraction support
 - [ ] Implement Bluebook citation extraction for legal documents
 - [ ] Add support for batch file uploads via UI
 - [ ] Implement document versioning system

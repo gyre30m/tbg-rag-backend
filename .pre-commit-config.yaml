@@ -1,0 +1,57 @@
+# Pre-commit hooks for code quality
+# Install: pip install pre-commit && pre-commit install
+
+repos:
+  # Black - Python code formatter
+  - repo: https://github.com/psf/black
+    rev: 23.11.0
+    hooks:
+      - id: black
+        language_version: python3.13
+        args: ['--line-length=100']
+
+  # Flake8 - Python linter
+  - repo: https://github.com/pycqa/flake8
+    rev: 6.1.0
+    hooks:
+      - id: flake8
+        args: ['--max-line-length=100', '--ignore=E203,W503,E501']
+        exclude: '^(venv/|.env)'
+
+  # isort - Python import sorter
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        args: ['--profile=black', '--line-length=100']
+
+  # MyPy - Python type checker
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.7.0
+    hooks:
+      - id: mypy
+        args: ['--ignore-missing-imports', '--no-strict-optional']
+        exclude: '^(tests/|venv/)'
+
+  # Trailing whitespace and file endings
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # Local hooks for running tests
+  - repo: local
+    hooks:
+      - id: pytest-unit
+        name: Run unit tests
+        entry: bash -c 'source venv/bin/activate && if [ -d "tests/unit" ]; then pytest tests/unit/services/test_file_service_simple.py tests/unit/test_enums.py tests/unit/test_basic.py -x --tb=short -q; fi'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
