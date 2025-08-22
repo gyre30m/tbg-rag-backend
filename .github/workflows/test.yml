@@ -36,7 +36,7 @@ jobs:
           pip install black flake8 mypy
 
       - name: Run Black formatter check
-        run: black --check app tests --line-length=100
+        run: black --check app tests
 
       - name: Run Flake8 linter
         run: flake8 app tests --max-line-length=100 --ignore=E203,W503,E501
