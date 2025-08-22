@@ -37,7 +37,9 @@ class Settings(BaseSettings):
     # File Processing Limits
     max_file_size: int = 52428800  # 50MB
     max_files_per_batch: int = 50
-    supported_mime_types: str = "application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    supported_mime_types: str = (
+        "application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
 
     # Processing Configuration
     chunk_size: int = 1000
