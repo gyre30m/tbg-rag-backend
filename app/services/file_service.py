@@ -4,7 +4,7 @@ File service for handling document uploads and storage operations.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -12,7 +12,7 @@ from fastapi import UploadFile
 from app.core.config import settings
 from app.core.database import db
 from app.models.enums import FileStatus
-from app.models.processing import ProcessingFileCreate, UploadResponse
+from app.models.processing import UploadResponse
 from app.services.processing_service import ProcessingService
 from app.utils.file_utils import FileValidator, calculate_content_hash, generate_safe_filename
 
@@ -40,6 +40,8 @@ class FileService:
         logger.info(f"Starting upload of {len(files)} files for user {user_id}")
 
         # Validate batch size
+        if len(files) == 0:
+            raise ValueError("No files provided")
         if len(files) > settings.max_files_per_batch:
             raise ValueError(f"Too many files: {len(files)} (max: {settings.max_files_per_batch})")
 
@@ -222,7 +224,7 @@ class FileService:
             True if successful, False otherwise
         """
         try:
-            delete_result = db.supabase.storage.from_("documents").remove([storage_path])
+            db.supabase.storage.from_("documents").remove([storage_path])
             return True
         except Exception as e:
             logger.error(f"Failed to delete file {storage_path}: {e}")

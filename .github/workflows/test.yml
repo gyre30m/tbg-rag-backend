@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  PYTHON_VERSION: '3.11'
+  PYTHON_VERSION: '3.13'
 
 jobs:
   lint:
@@ -101,7 +101,6 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-        if: github.event_name == 'push'
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v3
@@ -135,7 +134,9 @@ jobs:
       - name: Run Bandit security linter
         run: |
           pip install bandit
-          bandit -r app/ -f json -o bandit-report.json || true
+          bandit -r app/ -f json -o bandit-report.json
+          # Fail CI if high/medium severity issues found
+          bandit -r app/ -ll -i
 
       - name: Upload Bandit results
         uses: actions/upload-artifact@v4
