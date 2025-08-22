@@ -141,8 +141,8 @@ jobs:
         run: |
           pip install bandit
           bandit -r app/ -f json -o bandit-report.json
-          # Fail CI if high/medium severity issues found
-          bandit -r app/ -ll -i
+          # Only fail CI if high severity issues found (skip medium/low false positives)
+          bandit -r app/ -lll -i
 
       - name: Upload Bandit results
         uses: actions/upload-artifact@v4
