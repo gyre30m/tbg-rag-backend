@@ -3,17 +3,18 @@ Pydantic models for document-related data structures.
 These models define the API request/response schemas.
 """
 
-from pydantic import BaseModel, Field, validator
-from typing import List, Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from app.models.enums import DocumentType, DocumentCategory, FileStatus, BatchStatus
+from pydantic import BaseModel, Field, validator
+
+from app.models.enums import BatchStatus, DocumentCategory, DocumentType, FileStatus
 
 
 class DocumentBase(BaseModel):
     """Base document model with common fields."""
-    
+
     title: str = Field(..., description="Document title")
     doc_type: DocumentType = Field(..., description="Type of document")
     doc_category: DocumentCategory = Field(..., description="Document category/practice area")
@@ -25,7 +26,7 @@ class DocumentBase(BaseModel):
 
 class DocumentMetadata(DocumentBase):
     """Extended document metadata for case law and other specific types."""
-    
+
     # Legal Information (for case_law)
     case_name: Optional[str] = Field(default=None, description="Case name (e.g., Smith v. Jones)")
     case_number: Optional[str] = Field(default=None, description="Court docket number")
@@ -33,21 +34,33 @@ class DocumentMetadata(DocumentBase):
     jurisdiction: Optional[str] = Field(default=None, description="Legal jurisdiction")
     practice_area: Optional[str] = Field(default=None, description="Area of law")
     date: Optional[datetime] = Field(default=None, description="Document date")
-    
+
     # Expert Report Specific (for expert_report)
-    methodologies: Optional[List[str]] = Field(default=None, description="Calculation methodologies used")
-    damage_amounts: Optional[List[float]] = Field(default=None, description="Dollar amounts calculated")
-    discount_rates: Optional[List[float]] = Field(default=None, description="Discount rates applied")
-    subject_ages: Optional[List[int]] = Field(default=None, description="Ages of subjects in analysis")
-    education_levels: Optional[List[str]] = Field(default=None, description="Education levels considered")
-    
+    methodologies: Optional[List[str]] = Field(
+        default=None, description="Calculation methodologies used"
+    )
+    damage_amounts: Optional[List[float]] = Field(
+        default=None, description="Dollar amounts calculated"
+    )
+    discount_rates: Optional[List[float]] = Field(
+        default=None, description="Discount rates applied"
+    )
+    subject_ages: Optional[List[int]] = Field(
+        default=None, description="Ages of subjects in analysis"
+    )
+    education_levels: Optional[List[str]] = Field(
+        default=None, description="Education levels considered"
+    )
+
     # AI Analysis
-    confidence_score: Optional[float] = Field(default=None, ge=0, le=1, description="AI confidence in metadata extraction")
+    confidence_score: Optional[float] = Field(
+        default=None, ge=0, le=1, description="AI confidence in metadata extraction"
+    )
 
 
 class DocumentCreate(DocumentMetadata):
     """Model for creating new documents."""
-    
+
     filename: str = Field(..., description="Generated filename")
     original_filename: str = Field(..., description="Original uploaded filename")
     content_hash: str = Field(..., description="Content hash for deduplication")
@@ -60,7 +73,7 @@ class DocumentCreate(DocumentMetadata):
 
 class DocumentUpdate(BaseModel):
     """Model for updating document metadata during review."""
-    
+
     title: Optional[str] = None
     doc_type: Optional[DocumentType] = None
     doc_category: Optional[DocumentCategory] = None
@@ -78,7 +91,7 @@ class DocumentUpdate(BaseModel):
 
 class DocumentResponse(DocumentMetadata):
     """Full document response model."""
-    
+
     id: UUID
     filename: str
     original_filename: str
@@ -94,14 +107,14 @@ class DocumentResponse(DocumentMetadata):
     updated_at: Optional[datetime]
     reviewed_by: Optional[UUID]
     reviewed_at: Optional[datetime]
-    
+
     class Config:
         from_attributes = True
 
 
 class DocumentLibraryItem(BaseModel):
     """Simplified document model for library listings."""
-    
+
     id: UUID
     title: str
     doc_type: DocumentType
@@ -116,7 +129,7 @@ class DocumentLibraryItem(BaseModel):
 
 class DocumentStats(BaseModel):
     """Document statistics for library dashboard."""
-    
+
     total_documents: int
     books_textbooks: int
     articles_publications: int
@@ -128,7 +141,7 @@ class DocumentStats(BaseModel):
 
 class DocumentSearchQuery(BaseModel):
     """Search query parameters for document library."""
-    
+
     search: Optional[str] = Field(default=None, description="Text search query")
     doc_type: Optional[DocumentType] = Field(default=None, description="Filter by document type")
     doc_category: Optional[DocumentCategory] = Field(default=None, description="Filter by category")
@@ -138,7 +151,7 @@ class DocumentSearchQuery(BaseModel):
 
 class DocumentSearchResponse(BaseModel):
     """Document search results."""
-    
+
     documents: List[DocumentLibraryItem]
     page: int
     limit: int
@@ -148,14 +161,20 @@ class DocumentSearchResponse(BaseModel):
 
 class DocumentSearchRequest(BaseModel):
     """Model for vector similarity search requests."""
+
     query: str = Field(..., description="Search query text")
     limit: int = Field(default=10, ge=1, le=100, description="Maximum number of results")
-    similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0, description="Minimum similarity score")
-    doc_categories: Optional[List[str]] = Field(default=None, description="Optional document categories to filter by")
+    similarity_threshold: float = Field(
+        default=0.7, ge=0.0, le=1.0, description="Minimum similarity score"
+    )
+    doc_categories: Optional[List[str]] = Field(
+        default=None, description="Optional document categories to filter by"
+    )
 
 
 class DocumentSearchResult(BaseModel):
     """Model for individual similarity search result."""
+
     text_content: str
     chunk_index: int
     filename: str
@@ -167,6 +186,7 @@ class DocumentSearchResult(BaseModel):
 
 class VectorSearchResponse(BaseModel):
     """Model for vector similarity search response."""
+
     query: str
     results: List[DocumentSearchResult]
     total_results: int

@@ -3,17 +3,18 @@ Pydantic models for document processing and job management.
 These models handle the upload, processing, and review workflow.
 """
 
-from pydantic import BaseModel, Field, validator
-from typing import List, Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from app.models.enums import FileStatus, BatchStatus, LogLevel
+from pydantic import BaseModel, Field, validator
+
+from app.models.enums import BatchStatus, FileStatus, LogLevel
 
 
 class ProcessingJobBase(BaseModel):
     """Base processing job model."""
-    
+
     total_files: int = Field(..., ge=0, description="Total number of files in batch")
     processed_files: int = Field(default=0, ge=0, description="Number of files processed")
     completed_files: int = Field(default=0, ge=0, description="Number of files completed")
@@ -22,28 +23,30 @@ class ProcessingJobBase(BaseModel):
 
 class ProcessingJobCreate(ProcessingJobBase):
     """Model for creating new processing jobs."""
-    
+
     webhook_url: Optional[str] = Field(default=None, description="Webhook URL for status updates")
-    webhook_secret: Optional[str] = Field(default=None, description="Webhook secret for verification")
+    webhook_secret: Optional[str] = Field(
+        default=None, description="Webhook secret for verification"
+    )
 
 
 class ProcessingJobResponse(ProcessingJobBase):
     """Full processing job response."""
-    
+
     id: UUID
     status: BatchStatus
     error_message: Optional[str]
     created_at: datetime
     updated_at: Optional[datetime]
     last_webhook_at: Optional[datetime]
-    
+
     class Config:
         from_attributes = True
 
 
 class ProcessingFileBase(BaseModel):
     """Base processing file model."""
-    
+
     original_filename: str = Field(..., description="Original uploaded filename")
     file_size: int = Field(..., ge=0, description="File size in bytes")
     mime_type: str = Field(..., description="MIME type")
@@ -51,7 +54,7 @@ class ProcessingFileBase(BaseModel):
 
 class ProcessingFileCreate(ProcessingFileBase):
     """Model for creating processing file records."""
-    
+
     batch_id: UUID = Field(..., description="Parent processing job ID")
     stored_path: str = Field(..., description="Storage path in Supabase")
     content_hash: Optional[str] = Field(default=None, description="Content hash")
@@ -59,7 +62,7 @@ class ProcessingFileCreate(ProcessingFileBase):
 
 class ProcessingFileUpdate(BaseModel):
     """Model for updating processing file status."""
-    
+
     status: Optional[FileStatus] = None
     document_id: Optional[UUID] = None
     extracted_text: Optional[str] = None
@@ -74,7 +77,7 @@ class ProcessingFileUpdate(BaseModel):
 
 class ProcessingFileResponse(ProcessingFileBase):
     """Full processing file response."""
-    
+
     id: UUID
     batch_id: UUID
     document_id: Optional[UUID]
@@ -89,32 +92,32 @@ class ProcessingFileResponse(ProcessingFileBase):
     last_retry_at: Optional[datetime]
     created_at: datetime
     updated_at: Optional[datetime]
-    
+
     class Config:
         from_attributes = True
 
 
 class UploadFileInfo(BaseModel):
     """Information about uploaded file."""
-    
+
     filename: str
     size: int
     content_type: str
-    
-    @validator('content_type')
+
+    @validator("content_type")
     def validate_content_type(cls, v):
         """Validate that content type is supported."""
         supported_types = [
             "application/pdf",
-            "text/plain", 
+            "text/plain",
             "text/markdown",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         ]
         if v not in supported_types:
             raise ValueError(f"Unsupported file type: {v}")
         return v
-    
-    @validator('size')
+
+    @validator("size")
     def validate_file_size(cls, v):
         """Validate file size is within limits."""
         max_size = 52428800  # 50MB
@@ -125,7 +128,7 @@ class UploadFileInfo(BaseModel):
 
 class UploadResponse(BaseModel):
     """Response from file upload endpoint."""
-    
+
     job_id: UUID
     uploaded_files: List[UUID]
     failed_files: List[Dict[str, str]]
@@ -136,7 +139,7 @@ class UploadResponse(BaseModel):
 
 class ReviewQueueItem(BaseModel):
     """Item in the review queue."""
-    
+
     id: UUID
     document_id: UUID
     title: str
@@ -153,7 +156,7 @@ class ReviewQueueItem(BaseModel):
 
 class ReviewQueueResponse(BaseModel):
     """Review queue listing response."""
-    
+
     queue: List[ReviewQueueItem]
     total_pending: int
     total_in_progress: int
@@ -161,7 +164,7 @@ class ReviewQueueResponse(BaseModel):
 
 class ProcessingLog(BaseModel):
     """Processing log entry."""
-    
+
     job_id: UUID
     job_status: BatchStatus
     created_at: datetime
@@ -174,14 +177,14 @@ class ProcessingLog(BaseModel):
 
 class ProcessingLogsResponse(BaseModel):
     """Processing logs response."""
-    
+
     logs: List[ProcessingLog]
     total_logs: int
 
 
 class BatchStatusSummary(BaseModel):
     """Summary of batch processing status."""
-    
+
     job: ProcessingJobResponse
     batch_status: BatchStatus
     files: List[ProcessingFileResponse]
@@ -191,12 +194,10 @@ class BatchStatusSummary(BaseModel):
 
 class WebhookEvent(BaseModel):
     """Webhook event payload."""
-    
+
     type: str = Field(..., description="Event type")
     data: Dict[str, Any] = Field(..., description="Event data")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    
+
     class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+        json_encoders = {datetime: lambda v: v.isoformat()}

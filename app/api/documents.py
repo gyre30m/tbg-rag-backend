@@ -2,17 +2,18 @@
 Documents API endpoints for file upload and document management.
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from typing import List, Optional, Dict, Any
 import logging
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.security import verify_jwt_token
+from app.models.documents import DocumentSearchRequest, VectorSearchResponse
+from app.models.processing import UploadResponse
+from app.services.embedding_service import EmbeddingService
 from app.services.file_service import FileService
 from app.services.processing_service import ProcessingService
-from app.services.embedding_service import EmbeddingService
-from app.models.processing import UploadResponse
-from app.models.documents import DocumentSearchRequest, VectorSearchResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -24,7 +25,9 @@ processing_service = ProcessingService()
 embedding_service = EmbeddingService()
 
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> Dict[str, Any]:
     """Extract and verify user from JWT token."""
     try:
         user_data = verify_jwt_token(credentials.credentials)
@@ -37,21 +40,21 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 @router.post("/upload", response_model=UploadResponse, tags=["Documents"])
 async def upload_documents(
     files: List[UploadFile] = File(..., description="Documents to upload"),
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """
     Upload multiple documents for processing.
-    
+
     - **files**: List of document files (PDF, DOCX, TXT, MD)
     - Returns upload job information and file processing status
     """
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
-    
+
     user_id = current_user.get("sub")
     if not user_id:
         raise HTTPException(status_code=400, detail="Invalid user token")
-    
+
     try:
         result = await file_service.upload_files(files, user_id)
         return result
@@ -64,12 +67,11 @@ async def upload_documents(
 
 @router.get("/processing-status/{batch_id}", tags=["Documents"])
 async def get_processing_status(
-    batch_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    batch_id: str, current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Get detailed processing status for a batch of uploaded documents.
-    
+
     - **batch_id**: Processing job ID returned from upload
     - Returns batch status and individual file processing progress
     """
@@ -87,11 +89,11 @@ async def get_processing_status(
 async def approve_file_for_library(
     file_id: str,
     review_notes: Optional[str] = Form(None, description="Optional review notes"),
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """
     Approve a processed file for inclusion in the document library.
-    
+
     - **file_id**: Processing file ID
     - **review_notes**: Optional notes from the reviewer
     - Moves the document from processing to the main library
@@ -99,7 +101,7 @@ async def approve_file_for_library(
     user_id = current_user.get("sub")
     if not user_id:
         raise HTTPException(status_code=400, detail="Invalid user token")
-    
+
     try:
         result = await processing_service.approve_file_for_library(file_id, user_id, review_notes)
         if not result["success"]:
@@ -114,11 +116,11 @@ async def approve_file_for_library(
 async def reject_file(
     file_id: str,
     rejection_reason: str = Form(..., description="Reason for rejection"),
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """
     Reject a processed file from inclusion in the document library.
-    
+
     - **file_id**: Processing file ID
     - **rejection_reason**: Required reason for rejection
     - Marks the document as rejected and removes it from the processing queue
@@ -126,7 +128,7 @@ async def reject_file(
     user_id = current_user.get("sub")
     if not user_id:
         raise HTTPException(status_code=400, detail="Invalid user token")
-    
+
     try:
         result = await processing_service.reject_file(file_id, user_id, rejection_reason)
         if not result["success"]:
@@ -139,12 +141,11 @@ async def reject_file(
 
 @router.post("/search", response_model=VectorSearchResponse, tags=["Documents"])
 async def search_documents(
-    search_request: DocumentSearchRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    search_request: DocumentSearchRequest, current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Search documents using vector similarity search.
-    
+
     - **query**: Search query text
     - **limit**: Maximum number of results (default: 10)
     - **similarity_threshold**: Minimum similarity score 0-1 (default: 0.7)
@@ -156,13 +157,11 @@ async def search_documents(
             query_text=search_request.query,
             limit=search_request.limit,
             similarity_threshold=search_request.similarity_threshold,
-            doc_categories=search_request.doc_categories
+            doc_categories=search_request.doc_categories,
         )
-        
+
         return VectorSearchResponse(
-            query=search_request.query,
-            results=similar_chunks,
-            total_results=len(similar_chunks)
+            query=search_request.query, results=similar_chunks, total_results=len(similar_chunks)
         )
     except Exception as e:
         logger.error(f"Search failed: {e}")
@@ -175,11 +174,11 @@ async def list_library_documents(
     offset: int = 0,
     doc_type: Optional[str] = None,
     doc_category: Optional[str] = None,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """
     List documents in the main library.
-    
+
     - **limit**: Maximum number of documents to return (default: 50)
     - **offset**: Number of documents to skip (default: 0)
     - **doc_type**: Optional filter by document type
@@ -188,29 +187,33 @@ async def list_library_documents(
     """
     try:
         from app.core.database import db
-        
+
         # Build query
-        query = db.supabase.table("documents").select(
-            "id, title, authors, publication_date, doc_type, doc_category, "
-            "description, keywords, page_count, word_count, created_at, reviewed_by"
-        ).eq("status", "active")
-        
+        query = (
+            db.supabase.table("documents")
+            .select(
+                "id, title, authors, publication_date, doc_type, doc_category, "
+                "description, keywords, page_count, word_count, created_at, reviewed_by"
+            )
+            .eq("status", "active")
+        )
+
         # Apply filters
         if doc_type:
             query = query.eq("doc_type", doc_type)
         if doc_category:
             query = query.eq("doc_category", doc_category)
-        
+
         # Apply pagination and ordering
         query = query.order("created_at", desc=True).range(offset, offset + limit - 1)
-        
+
         result = await query.execute()
-        
+
         return {
             "documents": result.data,
             "total": len(result.data),
             "limit": limit,
-            "offset": offset
+            "offset": offset,
         }
     except Exception as e:
         logger.error(f"Library listing failed: {e}")
@@ -219,32 +222,36 @@ async def list_library_documents(
 
 @router.get("/library/{document_id}", tags=["Documents"])
 async def get_document_details(
-    document_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    document_id: str, current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Get detailed information about a specific document.
-    
+
     - **document_id**: Document ID
     - Returns complete document metadata and processing information
     """
     try:
         from app.core.database import db
-        
+
         # Get document details
-        doc_result = await db.supabase.table("documents").select("*").eq("id", document_id).execute()
+        doc_result = (
+            await db.supabase.table("documents").select("*").eq("id", document_id).execute()
+        )
         if not doc_result.data:
             raise HTTPException(status_code=404, detail="Document not found")
-        
+
         document = doc_result.data[0]
-        
+
         # Get document chunks count
-        chunks_result = await db.supabase.table("document_chunks").select(
-            "id", count="exact"
-        ).eq("document_id", document_id).execute()
-        
+        chunks_result = (
+            await db.supabase.table("document_chunks")
+            .select("id", count="exact")
+            .eq("document_id", document_id)
+            .execute()
+        )
+
         document["chunk_count"] = chunks_result.count or 0
-        
+
         return document
     except HTTPException:
         raise
@@ -255,31 +262,38 @@ async def get_document_details(
 
 @router.delete("/library/{document_id}", tags=["Documents"])
 async def delete_document(
-    document_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    document_id: str, current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Delete a document from the library (soft delete).
-    
+
     - **document_id**: Document ID
     - Marks the document as deleted rather than physically removing it
     """
     try:
-        from app.core.database import db
         from datetime import datetime
-        
+
+        from app.core.database import db
+
         user_id = current_user.get("sub")
-        
+
         # Update document status to deleted
-        result = await db.supabase.table("documents").update({
-            "status": "deleted",
-            "deleted_by": user_id,
-            "deleted_at": datetime.utcnow().isoformat()
-        }).eq("id", document_id).execute()
-        
+        result = (
+            await db.supabase.table("documents")
+            .update(
+                {
+                    "status": "deleted",
+                    "deleted_by": user_id,
+                    "deleted_at": datetime.utcnow().isoformat(),
+                }
+            )
+            .eq("id", document_id)
+            .execute()
+        )
+
         if not result.data:
             raise HTTPException(status_code=404, detail="Document not found")
-        
+
         return {"success": True, "message": "Document deleted successfully"}
     except HTTPException:
         raise

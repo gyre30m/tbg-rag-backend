@@ -2,21 +2,22 @@
 Main FastAPI application for TBG RAG Document Ingestion System.
 """
 
+import logging
+from datetime import datetime
+
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from datetime import datetime
-import logging
-import uvicorn
 
+from app.api import documents, processing, webhooks
 from app.core.config import settings
 from app.core.database import db
-from app.api import documents, processing, webhooks
 
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper()),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ app = FastAPI(
     version="1.0.0",
     description="Backend API for document upload, processing, and metadata management in the TBG RAG system",
     docs_url="/docs" if settings.debug else None,
-    redoc_url="/redoc" if settings.debug else None
+    redoc_url="/redoc" if settings.debug else None,
 )
 
 # CORS middleware for NextJS frontend
@@ -48,7 +49,7 @@ app.add_middleware(
 async def startup_event():
     """Application startup tasks."""
     logger.info("Starting TBG RAG Document Ingestion API")
-    
+
     # Test database connection
     if await db.health_check():
         logger.info("Database connection successful")
@@ -66,11 +67,7 @@ async def shutdown_event():
 @app.get("/", tags=["Health"])
 async def root():
     """Root endpoint for health checking."""
-    return {
-        "message": "TBG RAG Document Ingestion API",
-        "version": "1.0.0",
-        "status": "healthy"
-    }
+    return {"message": "TBG RAG Document Ingestion API", "version": "1.0.0", "status": "healthy"}
 
 
 @app.get("/health", tags=["Health"])
@@ -78,11 +75,11 @@ async def health_check():
     """Detailed health check endpoint."""
     try:
         db_healthy = await db.health_check()
-        
+
         return {
             "status": "healthy" if db_healthy else "unhealthy",
             "database": "connected" if db_healthy else "disconnected",
-            "timestamp": str(datetime.utcnow())
+            "timestamp": str(datetime.utcnow()),
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -94,30 +91,15 @@ async def health_check():
 async def global_exception_handler(request, exc):
     """Global exception handler for unhandled errors."""
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"}
-    )
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 # Include API routers
-app.include_router(
-    documents.router,
-    prefix="/api/documents",
-    tags=["Documents"]
-)
+app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
 
-app.include_router(
-    processing.router,
-    prefix="/api/processing",
-    tags=["Processing"]
-)
+app.include_router(processing.router, prefix="/api/processing", tags=["Processing"])
 
-app.include_router(
-    webhooks.router,
-    prefix="/api/webhooks",
-    tags=["Webhooks"]
-)
+app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
 
 
 if __name__ == "__main__":
@@ -126,5 +108,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=settings.debug,
-        log_level=settings.log_level.lower()
+        log_level=settings.log_level.lower(),
     )
