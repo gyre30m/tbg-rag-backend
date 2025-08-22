@@ -163,7 +163,7 @@ class EmbeddingService:
                         await asyncio.sleep(0.1)
 
                 except Exception as e:
-                    logger.error(f"Embedding batch {i//batch_size + 1} failed: {e}")
+                    logger.error(f"Embedding batch {i // batch_size + 1} failed: {e}")
                     return {"success": False, "error": f"OpenAI embedding API failed: {str(e)}"}
 
             if len(all_embeddings) != len(chunks):

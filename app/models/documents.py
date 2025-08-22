@@ -4,12 +4,12 @@ These models define the API request/response schemas.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
 
-from app.models.enums import BatchStatus, DocumentCategory, DocumentType, FileStatus
+from app.models.enums import DocumentCategory, DocumentType
 
 
 class DocumentBase(BaseModel):

@@ -65,11 +65,11 @@ class FileValidator:
                 logger.warning(f"MIME type detection failed: {e}")
                 # Fallback to file extension checking
                 if not self._validate_file_extension(filename):
-                    errors.append(f"Unsupported file extension")
+                    errors.append("Unsupported file extension")
         else:
             # Use extension-based validation when magic is not available
             if not self._validate_file_extension(filename):
-                errors.append(f"Unsupported file extension")
+                errors.append("Unsupported file extension")
 
         # Check for empty files
         if len(content) == 0:
