@@ -25,7 +25,7 @@ async def get_current_user(
 ) -> Dict[str, Any]:
     """Extract and verify user from JWT token."""
     try:
-        user_data = verify_jwt_token(credentials.credentials)
+        user_data = await verify_jwt_token(credentials.credentials)
         return user_data
     except Exception as e:
         logger.error(f"Authentication failed: {e}")

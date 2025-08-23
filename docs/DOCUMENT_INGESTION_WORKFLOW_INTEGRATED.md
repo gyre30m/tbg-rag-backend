@@ -1,8 +1,8 @@
 # TBG RAG Document Ingestion Workflow - Integrated Implementation Guide
 
-**Document Version**: 2.0
-**Date**: 2025-08-22
-**Status**: Implementation in Progress
+**Document Version**: 2.1
+**Date**: 2025-08-22 17:35 UTC
+**Status**: Priority 1 Backend Complete - Ready for Frontend
 **Replaces**: document-ingestion-workflow-complete.md
 
 ---
@@ -180,12 +180,13 @@ graph TD
 - Status changes to "approved"
 - Document becomes searchable in library
 
-#### Implementation Status: ❌ **NOT IMPLEMENTED**
-- ❌ **MISSING**: Review queue endpoint (`GET /api/documents/queue`)
-- ❌ **MISSING**: Metadata update endpoint (`PUT /api/documents/{id}/metadata`)
-- ❌ **MISSING**: Document preview integration
-- ❌ **MISSING**: Review session tracking
-- ✅ Approval endpoint exists but uses wrong URL pattern
+#### Implementation Status: ✅ **IMPLEMENTED**
+- ✅ **COMPLETED**: Review queue endpoint (`GET /api/documents/queue`)
+- ✅ **COMPLETED**: Metadata update endpoint (`PUT /api/documents/{id}/metadata`)
+- ✅ **COMPLETED**: Review session tracking (reviewed_by, review_started_at)
+- ✅ **COMPLETED**: Comprehensive unit tests (10 tests passing)
+- ⚠️ **PARTIAL**: Document preview integration (text available, UI pending)
+- ⚠️ **PENDING**: Approval endpoint URL pattern fix
 
 #### Technical Flow
 ```mermaid
@@ -245,11 +246,11 @@ graph TD
 - Delete documents (soft delete)
 - Download original files
 
-#### Implementation Status: ⚠️ **PARTIAL**
+#### Implementation Status: ✅ **IMPLEMENTED**
 - ✅ Basic library listing endpoint exists
 - ✅ Document detail endpoint exists
 - ✅ Delete endpoint exists
-- ❌ **MISSING**: Statistics endpoint (`GET /api/documents/stats`)
+- ✅ **COMPLETED**: Statistics endpoint (`GET /api/documents/stats`)
 - ❌ **MISSING**: Advanced search functionality
 - ❌ **MISSING**: Full-text search optimization
 
@@ -316,7 +317,8 @@ graph TD
 - **RLS Policies**: Row-level security enabled ✅
 
 #### Testing
-- **Unit Tests**: 30/30 tests passing (100% success rate) ✅
+- **Unit Tests**: 51/51 tests passing (100% success rate) ✅
+- **New API Tests**: 21 tests added for Priority 1 endpoints ✅
 - **Test Infrastructure**: Comprehensive mocking and fixtures ✅
 - **CI/CD Pipeline**: GitHub Actions with 4 parallel jobs ✅
 
@@ -328,18 +330,16 @@ graph TD
 - **AI Service**: Service class exists but implementation unclear ⚠️
 - **Embedding Service**: Service class exists but implementation unclear ⚠️
 
-#### API Endpoints
+#### API Endpoints - ✅ **COMPLETED**
 - **Basic CRUD**: Document listing, details, deletion ✅
 - **Processing Status**: Basic batch status checking ✅
 - **File Management**: Upload and basic file operations ✅
+- **Review Queue**: `GET /api/documents/queue` ✅
+- **Library Statistics**: `GET /api/documents/stats` ✅
+- **Metadata Updates**: `PUT /api/documents/{id}/metadata` ✅
+- **Processing Logs**: `GET /api/processing/logs` ✅
 
 ### ❌ **Not Implemented**
-
-#### Critical API Endpoints
-- **Review Queue**: `GET /api/documents/queue` ❌
-- **Library Statistics**: `GET /api/documents/stats` ❌
-- **Metadata Updates**: `PUT /api/documents/{id}/metadata` ❌
-- **Processing Logs**: `GET /api/processing/logs` ❌
 
 #### Background Processing
 - **Automatic Pipeline**: Files don't auto-progress through stages ❌

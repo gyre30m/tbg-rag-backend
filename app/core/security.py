@@ -1,11 +1,12 @@
 """
 Security and authentication handling for Supabase JWT tokens.
-Uses modern RS256 JWT verification with Supabase public keys.
+Uses ES256 JWT verification with JWK discovery from Supabase.
 """
 
 import logging
 from typing import Any, Dict
 
+import httpx
 import jwt
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -19,28 +20,55 @@ security = HTTPBearer()
 
 
 class AuthManager:
-    """Handles JWT token verification and user authentication."""
+    """Handles JWT token verification and user authentication with JWK discovery."""
 
     def __init__(self):
-        self.public_key = self._prepare_public_key()
+        self.jwks_cache = {}
+        self.jwks_uri = settings.supabase_jwks_uri
 
-    def _prepare_public_key(self) -> str:
-        """Prepare the public key for JWT verification."""
-        public_key = settings.supabase_jwt_public_key
+    async def get_jwks(self) -> Dict[str, Any]:
+        """Fetch and cache JWK set from Supabase."""
+        if not self.jwks_cache:
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(self.jwks_uri)
+                    response.raise_for_status()
+                    self.jwks_cache = response.json()
+            except Exception as e:
+                logger.error(f"Failed to fetch JWKS: {e}")
+                raise HTTPException(status_code=500, detail="Unable to verify tokens")
 
-        # Add PEM headers if not present
-        if not public_key.startswith("-----BEGIN"):
-            public_key = f"-----BEGIN PUBLIC KEY-----\n{public_key}\n-----END PUBLIC KEY-----"
+        return self.jwks_cache
 
-        return public_key
+    async def get_signing_key(self, token: str):
+        """Get the signing key for the JWT token."""
+        # Decode header to get kid
+        header = jwt.get_unverified_header(token)
+        kid = header.get("kid")
 
-    def verify_token(self, token: str) -> Dict[str, Any]:
-        """Verify and decode JWT token."""
+        if not kid:
+            raise HTTPException(status_code=401, detail="Token missing key ID")
+
+        # Get JWKS
+        jwks = await self.get_jwks()
+
+        # Find matching key
+        for key in jwks.get("keys", []):
+            if key["kid"] == kid:
+                return jwt.PyJWK(key)
+
+        raise HTTPException(status_code=401, detail="Unable to find signing key")
+
+    async def verify_token(self, token: str) -> Dict[str, Any]:
+        """Verify and decode JWT token using JWK discovery."""
         try:
-            # Decode JWT token using RS256
+            # Get the signing key
+            signing_key = await self.get_signing_key(token)
+
+            # Decode JWT token using ES256
             payload = jwt.decode(
                 token,
-                self.public_key,
+                signing_key.key,
                 algorithms=[settings.jwt_algorithm],
                 audience="authenticated",  # Supabase audience
             )
@@ -52,13 +80,15 @@ class AuthManager:
         except jwt.InvalidTokenError as e:
             logger.warning(f"Invalid token: {e}")
             raise HTTPException(status_code=401, detail="Invalid token")
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Token verification error: {e}")
             raise HTTPException(status_code=401, detail="Authentication failed")
 
-    def get_user_from_token(self, token: str) -> Dict[str, Any]:
+    async def get_user_from_token(self, token: str) -> Dict[str, Any]:
         """Extract user information from JWT token."""
-        payload = self.verify_token(token)
+        payload = await self.verify_token(token)
 
         return {
             "id": payload.get("sub"),
@@ -74,9 +104,9 @@ class AuthManager:
 auth_manager = AuthManager()
 
 
-def verify_jwt_token(token: str) -> Dict[str, Any]:
+async def verify_jwt_token(token: str) -> Dict[str, Any]:
     """Standalone function to verify JWT token."""
-    return auth_manager.verify_token(token)
+    return await auth_manager.verify_token(token)
 
 
 async def get_current_user(
@@ -95,7 +125,7 @@ async def get_current_user(
         HTTPException: If token is invalid or expired
     """
     try:
-        user = auth_manager.get_user_from_token(credentials.credentials)
+        user = await auth_manager.get_user_from_token(credentials.credentials)
         logger.debug(f"Authenticated user: {user['email']}")
         return user
     except HTTPException:

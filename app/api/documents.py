@@ -30,7 +30,7 @@ async def get_current_user(
 ) -> Dict[str, Any]:
     """Extract and verify user from JWT token."""
     try:
-        user_data = verify_jwt_token(credentials.credentials)
+        user_data = await verify_jwt_token(credentials.credentials)
         return user_data
     except Exception as e:
         logger.error(f"Authentication failed: {e}")
@@ -85,16 +85,16 @@ async def get_processing_status(
         raise HTTPException(status_code=500, detail="Status check failed")
 
 
-@router.post("/approve/{file_id}", tags=["Documents"])
+@router.post("/{document_id}/approve", tags=["Documents"])
 async def approve_file_for_library(
-    file_id: str,
+    document_id: str,
     review_notes: Optional[str] = Form(None, description="Optional review notes"),
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """
     Approve a processed file for inclusion in the document library.
 
-    - **file_id**: Processing file ID
+    - **document_id**: Processing file ID
     - **review_notes**: Optional notes from the reviewer
     - Moves the document from processing to the main library
     """
@@ -103,7 +103,9 @@ async def approve_file_for_library(
         raise HTTPException(status_code=400, detail="Invalid user token")
 
     try:
-        result = await processing_service.approve_file_for_library(file_id, user_id, review_notes)
+        result = await processing_service.approve_file_for_library(
+            document_id, user_id, review_notes
+        )
         if not result["success"]:
             raise HTTPException(status_code=400, detail=result["error"])
         return result

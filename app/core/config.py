@@ -18,11 +18,13 @@ class Settings(BaseSettings):
     supabase_pat_token: Optional[str] = None  # Personal Access Token for CLI/MCP
     railway_token: Optional[str] = None  # Railway deployment token
 
-    # JWT Configuration (RS256)
-    supabase_jwt_public_key: str
-    supabase_jwt_private_key: str
-    jwt_algorithm: str = "RS256"
-    supabase_jwks_uri: Optional[str] = None
+    # JWT Configuration (ES256 with JWK)
+    supabase_jwt_public_key: Optional[str] = None  # Legacy, not used with JWK
+    supabase_jwt_private_key: Optional[str] = None  # Not needed for verification
+    jwt_algorithm: str = "ES256"
+    supabase_jwks_uri: str = (
+        "https://leozlogjxlzsnoijodez.supabase.co/auth/v1/.well-known/jwks.json"
+    )
 
     # Legacy database URL (optional, not used with Supabase)
     database_url: Optional[str] = None
