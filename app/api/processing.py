@@ -133,7 +133,8 @@ async def get_processing_file_details(
     """
     try:
         # Get processing file details
-        result = db.supabase.table("processing_files").select("*").eq("id", file_id).execute()
+        client = await db.get_supabase_client()
+        result = await client.table("processing_files").select("*").eq("id", file_id).execute()
         if not result.data:
             raise HTTPException(status_code=404, detail="Processing file not found")
 
@@ -322,11 +323,12 @@ async def get_processing_stats(current_user: Dict[str, Any] = Depends(get_curren
     """
     try:
         # Get file status counts
-        file_stats_result = db.supabase.rpc("get_file_status_counts").execute()
+        client = await db.get_supabase_client()
+        file_stats_result = await client.rpc("get_file_status_counts").execute()
         file_stats = file_stats_result.data if file_stats_result.data else []
 
         # Get batch status counts
-        batch_stats_result = db.supabase.rpc("get_batch_status_counts").execute()
+        batch_stats_result = await client.rpc("get_batch_status_counts").execute()
         batch_stats = batch_stats_result.data if batch_stats_result.data else []
 
         # Get recent activity (last 24 hours)
@@ -334,15 +336,15 @@ async def get_processing_stats(current_user: Dict[str, Any] = Depends(get_curren
 
         yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
 
-        recent_files_result = (
-            db.supabase.table("processing_files")
+        recent_files_result = await (
+            client.table("processing_files")
             .select("id", count="exact")
             .gte("created_at", yesterday)
             .execute()
         )
 
-        recent_batches_result = (
-            db.supabase.table("processing_jobs")
+        recent_batches_result = await (
+            client.table("processing_jobs")
             .select("id", count="exact")
             .gte("created_at", yesterday)
             .execute()
@@ -373,7 +375,8 @@ async def get_processing_logs(current_user: Dict[str, Any] = Depends(get_current
     try:
         from app.core.database import db
 
-        result = db.supabase.rpc("get_processing_logs", {"limit_count": 100}).execute()
+        client = await db.get_supabase_client()
+        result = await client.rpc("get_processing_logs", {"limit_count": 100}).execute()
 
         logs = []
         if result.data:

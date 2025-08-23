@@ -26,7 +26,7 @@ class ProcessingService:
         self.embedding_service = EmbeddingService()
         self.max_concurrent_files = 5  # Limit concurrent processing
 
-    def queue_text_extraction(self, file_id: str) -> bool:
+    async def queue_text_extraction(self, file_id: str) -> bool:
         """
         Queue a file for text extraction processing.
 
@@ -40,7 +40,7 @@ class ProcessingService:
             logger.info(f"🚀 QUEUE: Starting text extraction for file {file_id}")
 
             # Update file status to queued
-            self._update_file_status(file_id, FileStatus.QUEUED)
+            await self._update_file_status(file_id, FileStatus.QUEUED)
 
             # Start background processing (fire and forget)
             logger.info(f"🔄 QUEUE: Creating async task for file {file_id}")
@@ -151,46 +151,60 @@ class ProcessingService:
             logger.info(f"📝 STEP 1: Starting text extraction for file {file_id}")
             extraction_result = await self.extraction_service.extract_text_from_file(file_id)
             step_duration = time.time() - step_start
-            
+
             if not extraction_result["success"]:
                 logger.error(
                     f"❌ STEP 1 FAILED: Text extraction for file {file_id}: {extraction_result['error']} ({step_duration:.2f}s)"
                 )
                 return dict(extraction_result)
-            logger.info(f"✅ STEP 1 SUCCESS: Text extraction completed for file {file_id} in {step_duration:.2f}s")
+            logger.info(
+                f"✅ STEP 1 SUCCESS: Text extraction completed for file {file_id} in {step_duration:.2f}s"
+            )
 
             # Step 2: AI Metadata Extraction
             step_start = time.time()
             logger.info(f"🤖 STEP 2: Starting AI metadata extraction for file {file_id}")
             metadata_result = await self.ai_service.extract_metadata(file_id)
             step_duration = time.time() - step_start
-            
+
             if not metadata_result["success"]:
                 logger.error(
                     f"❌ STEP 2 FAILED: Metadata extraction for file {file_id}: {metadata_result['error']} ({step_duration:.2f}s)"
                 )
                 return dict(metadata_result)
-            logger.info(f"✅ STEP 2 SUCCESS: AI metadata extraction completed for file {file_id} in {step_duration:.2f}s")
+            logger.info(
+                f"✅ STEP 2 SUCCESS: AI metadata extraction completed for file {file_id} in {step_duration:.2f}s"
+            )
 
             # Step 3: Embedding Generation
             step_start = time.time()
             logger.info(f"🔗 STEP 3: Starting embedding generation for file {file_id}")
             embedding_result = await self.embedding_service.generate_embeddings(file_id)
             step_duration = time.time() - step_start
-            
+
             if not embedding_result["success"]:
                 logger.error(
                     f"❌ STEP 3 FAILED: Embedding generation for file {file_id}: {embedding_result['error']} ({step_duration:.2f}s)"
                 )
                 return dict(embedding_result)
-            logger.info(f"✅ STEP 3 SUCCESS: Embedding generation completed for file {file_id} in {step_duration:.2f}s")
+            logger.info(
+                f"✅ STEP 3 SUCCESS: Embedding generation completed for file {file_id} in {step_duration:.2f}s"
+            )
+
+            # Step 4: Create document record for review
+            logger.info(f"📄 STEP 4: Creating document record for file {file_id}")
+            document_id = await self._create_document_for_review(
+                file_id, metadata_result.get("metadata", {})
+            )
 
             # Mark file as ready for review
             logger.info(f"📋 Marking file {file_id} as ready for review")
-            self._update_file_status(file_id, FileStatus.REVIEW_PENDING)
+            await self._update_file_status(file_id, FileStatus.REVIEW_PENDING, document_id=document_id)
 
             total_duration = time.time() - start_time
-            logger.info(f"🎯 PIPELINE COMPLETE: File {file_id} processed successfully in {total_duration:.2f}s")
+            logger.info(
+                f"🎯 PIPELINE COMPLETE: File {file_id} processed successfully in {total_duration:.2f}s"
+            )
 
             return {
                 "success": True,
@@ -204,9 +218,80 @@ class ProcessingService:
 
         except Exception as e:
             total_duration = time.time() - start_time
-            logger.error(f"💥 PIPELINE FAILED: File {file_id} failed after {total_duration:.2f}s: {e}")
-            self._update_file_status(file_id, FileStatus.EXTRACTION_FAILED, error_message=str(e))
+            logger.error(
+                f"💥 PIPELINE FAILED: File {file_id} failed after {total_duration:.2f}s: {e}"
+            )
+            await self._update_file_status(file_id, FileStatus.EXTRACTION_FAILED, error_message=str(e))
             return {"success": False, "file_id": file_id, "error": str(e)}
+
+    async def _create_document_for_review(self, file_id: str, ai_metadata: Dict[str, Any]) -> str:
+        """
+        Create document record during processing for review queue.
+
+        Args:
+            file_id: Processing file ID
+            ai_metadata: Extracted AI metadata
+
+        Returns:
+            Created document ID
+        """
+        try:
+            # Get processing file record
+            client = await db.get_supabase_client()
+            file_result = (
+                await client.table("processing_files").select("*").eq("id", file_id).execute()
+            )
+
+            if not file_result.data:
+                raise ValueError(f"Processing file {file_id} not found")
+
+            file_record = file_result.data[0]
+
+            # Create document record with AI-extracted metadata
+            # Only use columns that exist in actual database schema
+            document_data = {
+                # Required fields
+                "title": ai_metadata.get("title", file_record["original_filename"]),
+                "filename": file_record["original_filename"],
+                "doc_type": ai_metadata.get("doc_type", "other"),
+                # Optional fields that exist in schema (from database.types.ts)
+                "authors": ai_metadata.get("authors"),
+                "date": ai_metadata.get("date") or ai_metadata.get("publication_date"),
+                "doc_category": ai_metadata.get("doc_category"),
+                "description": ai_metadata.get("summary"),
+                "case_name": ai_metadata.get("case_name"),
+                "case_number": ai_metadata.get("case_number"),
+                "court": ai_metadata.get("court"),
+                "jurisdiction": ai_metadata.get("jurisdiction"),
+                "practice_area": ai_metadata.get("practice_area"),
+                "confidence_score": ai_metadata.get("confidence_score"),
+                "keywords": ai_metadata.get("keywords"),
+                "citation": ai_metadata.get("bluebook_citation"),
+                "content_hash": file_record.get("content_hash"),
+                "file_size": file_record.get("file_size"),
+                "page_count": file_record.get("page_count"),
+                "word_count": file_record.get("word_count"),
+                "char_count": file_record.get("char_count"),
+                "is_reviewed": False,  # Ready for review
+                "is_deleted": False,
+                "is_archived": False,
+            }
+
+            # Insert document record
+            document_result = await client.table("documents").insert(document_data).execute()
+            document_id = document_result.data[0]["id"]
+
+            # Update document chunks to reference the new document
+            await client.table("document_chunks").update({"document_id": document_id}).eq(
+                "processing_file_id", file_id
+            ).execute()
+
+            logger.info(f"✅ Document {document_id} created for file {file_id} and ready for review")
+            return document_id
+
+        except Exception as e:
+            logger.error(f"❌ Failed to create document for file {file_id}: {e}")
+            raise
 
     async def approve_file_for_library(
         self, file_id: str, reviewer_id: str, review_notes: Optional[str] = None
@@ -382,7 +467,7 @@ class ProcessingService:
             logger.error(f"Failed to get processing status for batch {batch_id}: {e}")
             return {"success": False, "batch_id": batch_id, "error": str(e)}
 
-    def _update_file_status(self, file_id: str, status: FileStatus, **kwargs):
+    async def _update_file_status(self, file_id: str, status: FileStatus, **kwargs):
         """Update file processing status."""
         try:
             update_data = {
@@ -391,7 +476,8 @@ class ProcessingService:
                 **kwargs,
             }
 
-            db.supabase.table("processing_files").update(update_data).eq("id", file_id).execute()
+            client = await db.get_supabase_client()
+            await client.table("processing_files").update(update_data).eq("id", file_id).execute()
 
         except Exception as e:
             logger.error(f"Failed to update file {file_id} status: {e}")

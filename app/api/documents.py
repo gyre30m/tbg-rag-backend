@@ -265,7 +265,8 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
         ORDER BY pf.created_at ASC
         """
 
-        result = db.supabase.rpc("get_document_queue").execute()
+        client = await db.get_supabase_client()
+        result = await client.rpc("get_document_queue").execute()
 
         queue_items = []
         if result.data:
@@ -304,7 +305,7 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
         WHERE d.is_reviewed = false
         """
 
-        stats_result = db.supabase.rpc("get_document_queue_stats").execute()
+        stats_result = await client.rpc("get_document_queue_stats").execute()
 
         total_pending = 0
         total_in_progress = 0
@@ -376,8 +377,9 @@ async def update_document_metadata(
         update_data["updated_at"] = datetime.utcnow().isoformat()
 
         # Check if document exists
-        doc_check = (
-            db.supabase.table("documents").select("id, is_reviewed").eq("id", document_id).execute()
+        client = await db.get_supabase_client()
+        doc_check = await (
+            client.table("documents").select("id, is_reviewed").eq("id", document_id).execute()
         )
 
         if not doc_check.data:
@@ -390,7 +392,7 @@ async def update_document_metadata(
             )
 
         # Update document metadata
-        result = db.supabase.table("documents").update(update_data).eq("id", document_id).execute()
+        result = await client.table("documents").update(update_data).eq("id", document_id).execute()
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Document not found")
@@ -403,7 +405,7 @@ async def update_document_metadata(
             "updated_at": datetime.utcnow().isoformat(),
         }
 
-        db.supabase.table("processing_files").update(processing_update).eq(
+        await client.table("processing_files").update(processing_update).eq(
             "document_id", document_id
         ).execute()
 
@@ -435,7 +437,8 @@ async def get_document_stats(current_user: Dict[str, Any] = Depends(get_current_
         from app.core.database import db
 
         # Query document counts by type using the new RPC function
-        result = db.supabase.rpc("get_document_stats").execute()
+        client = await db.get_supabase_client()
+        result = await client.rpc("get_document_stats").execute()
 
         # Initialize all document types to 0
         stats = {
@@ -500,15 +503,16 @@ async def get_document_details(
         from app.core.database import db
 
         # Get document details
-        doc_result = db.supabase.table("documents").select("*").eq("id", document_id).execute()
+        client = await db.get_supabase_client()
+        doc_result = await client.table("documents").select("*").eq("id", document_id).execute()
         if not doc_result.data:
             raise HTTPException(status_code=404, detail="Document not found")
 
         document = doc_result.data[0]
 
         # Get document chunks count
-        chunks_result = (
-            db.supabase.table("document_chunks")
+        chunks_result = await (
+            client.table("document_chunks")
             .select("id", count="exact")
             .eq("document_id", document_id)
             .execute()
