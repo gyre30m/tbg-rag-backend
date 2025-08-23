@@ -7,7 +7,7 @@ from enum import Enum
 
 
 class FileStatus(str, Enum):
-    """File processing status enum."""
+    """File processing status enum - matches database constraint exactly."""
 
     # Upload Phase
     UPLOADING = "uploading"
@@ -16,38 +16,38 @@ class FileStatus(str, Enum):
 
     # Processing Phase
     QUEUED = "queued"
-    EXTRACTING = "extracting"
+    EXTRACTING_TEXT = "extracting_text"
     EXTRACTION_FAILED = "extraction_failed"
-    ANALYZING = "analyzing"
+    ANALYZING_METADATA = "analyzing_metadata"
     ANALYSIS_FAILED = "analysis_failed"
-    EMBEDDING = "embedding"
+    GENERATING_EMBEDDINGS = "generating_embeddings"
     EMBEDDING_FAILED = "embedding_failed"
+    PROCESSING_COMPLETE = "processing_complete"
 
     # Review Phase
     REVIEW_PENDING = "review_pending"
-    REVIEW_IN_PROGRESS = "review_in_progress"
+    UNDER_REVIEW = "under_review"
     APPROVED = "approved"
     REJECTED = "rejected"
 
-    # Special Cases
+    # Special States
     DUPLICATE = "duplicate"
     CANCELLED = "cancelled"
     RETRY_PENDING = "retry_pending"
 
 
 class BatchStatus(str, Enum):
-    """Batch processing status enum (calculated from file statuses)."""
+    """Batch processing status enum - matches database constraint exactly."""
 
     CREATED = "created"
     UPLOADING = "uploading"
-    UPLOADED = "uploaded"
     PROCESSING = "processing"
-    EXTRACTING = "extracting"
-    ANALYZING = "analyzing"
-    EMBEDDING = "embedding"
+    PROCESSING_COMPLETE = "processing_complete"
     REVIEW_READY = "review_ready"
-    PARTIALLY_APPROVED = "partially_approved"
+    UNDER_REVIEW = "under_review"
+    REVIEW_COMPLETE = "review_complete"
     COMPLETED = "completed"
+    PARTIALLY_COMPLETED = "partially_completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
 
@@ -71,6 +71,14 @@ class DocumentCategory(str, Enum):
     EMPLOYMENT = "EM"
     BUSINESS_VALUATION = "BV"
     OTHER = "Other"
+
+
+class DocumentStatus(str, Enum):
+    """Document library status enum."""
+
+    ACTIVE = "active"
+    DELETED = "deleted"
+    ARCHIVED = "archived"
 
 
 class LogLevel(str, Enum):

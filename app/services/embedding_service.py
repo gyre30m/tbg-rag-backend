@@ -78,7 +78,7 @@ class EmbeddingService:
             if embeddings_result["success"]:
                 # Save embeddings to database
                 await self._save_embeddings(file_id, chunks, embeddings_result["embeddings"])
-                await self._update_file_status(file_id, FileStatus.EMBEDDINGS_GENERATED)
+                await self._update_file_status(file_id, FileStatus.PROCESSING_COMPLETE)
 
                 logger.info(
                     f"Successfully generated embeddings for file {file_id} ({len(chunks)} chunks)"
@@ -257,7 +257,7 @@ class EmbeddingService:
                 (1 - (dc.embedding <-> '[{','.join(map(str, query_embedding))}]'::vector)) as similarity_score
             FROM document_chunks dc
             JOIN processing_files pf ON dc.processing_file_id = pf.id
-            WHERE pf.status = 'embeddings_generated'
+            WHERE pf.status = 'processing_complete'
             """
 
             # Add category filter if specified

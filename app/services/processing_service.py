@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.core.database import db
-from app.models.enums import BatchStatus, FileStatus
+from app.models.enums import BatchStatus, DocumentStatus, FileStatus
 from app.services.ai_service import AIService
 from app.services.embedding_service import EmbeddingService
 from app.services.extraction_service import ExtractionService
@@ -39,7 +39,7 @@ class ProcessingService:
             logger.info(f"Queuing file {file_id} for text extraction")
 
             # Update file status to queued
-            await self._update_file_status(file_id, FileStatus.QUEUED_FOR_EXTRACTION)
+            await self._update_file_status(file_id, FileStatus.QUEUED)
 
             # Start background processing (fire and forget)
             asyncio.create_task(self._process_file_pipeline(file_id))
@@ -99,7 +99,7 @@ class ProcessingService:
             failed = len(results) - successful
 
             # Update batch with final status
-            final_status = BatchStatus.COMPLETED if failed == 0 else BatchStatus.PARTIALLY_FAILED
+            final_status = BatchStatus.PROCESSING_COMPLETE if failed == 0 else BatchStatus.FAILED
             await self._update_batch_status(
                 batch_id, final_status, processed_files=successful, failed_files=failed
             )
@@ -167,7 +167,7 @@ class ProcessingService:
                 return embedding_result
 
             # Mark file as ready for review
-            await self._update_file_status(file_id, FileStatus.READY_FOR_REVIEW)
+            await self._update_file_status(file_id, FileStatus.REVIEW_PENDING)
 
             logger.info(f"Pipeline processing completed successfully for file {file_id}")
 
@@ -178,13 +178,13 @@ class ProcessingService:
                 "page_count": extraction_result.get("page_count", 0),
                 "chunk_count": embedding_result.get("chunk_count", 0),
                 "metadata": metadata_result.get("metadata", {}),
-                "status": FileStatus.READY_FOR_REVIEW.value,
+                "status": FileStatus.REVIEW_PENDING.value,
             }
 
         except Exception as e:
             logger.error(f"Pipeline processing failed for file {file_id}: {e}")
             await self._update_file_status(
-                file_id, FileStatus.PROCESSING_FAILED, error_message=str(e)
+                file_id, FileStatus.EXTRACTION_FAILED, error_message=str(e)
             )
             return {"success": False, "file_id": file_id, "error": str(e)}
 
@@ -214,7 +214,7 @@ class ProcessingService:
 
             file_record = file_result.data[0]
 
-            if file_record["status"] != FileStatus.READY_FOR_REVIEW.value:
+            if file_record["status"] != FileStatus.REVIEW_PENDING.value:
                 raise ValueError(
                     f"File {file_id} is not ready for review (status: {file_record['status']})"
                 )
@@ -237,7 +237,7 @@ class ProcessingService:
                 "word_count": file_record.get("word_count", 0),
                 "char_count": file_record.get("char_count", 0),
                 "chunk_count": file_record.get("chunk_count", 0),
-                "status": "active",
+                "status": DocumentStatus.ACTIVE.value,
                 "reviewed_by": reviewer_id,
                 "reviewed_at": datetime.utcnow().isoformat(),
                 "review_notes": review_notes,
@@ -251,7 +251,7 @@ class ProcessingService:
             # Update processing file status
             await self._update_file_status(
                 file_id,
-                FileStatus.APPROVED_FOR_LIBRARY,
+                FileStatus.APPROVED,
                 document_id=document_id,
                 reviewed_by=reviewer_id,
                 reviewed_at=datetime.utcnow().isoformat(),
@@ -269,7 +269,7 @@ class ProcessingService:
                 "success": True,
                 "file_id": file_id,
                 "document_id": document_id,
-                "status": "approved_for_library",
+                "status": FileStatus.APPROVED.value,
             }
 
         except Exception as e:
@@ -307,7 +307,7 @@ class ProcessingService:
             return {
                 "success": True,
                 "file_id": file_id,
-                "status": "rejected",
+                "status": FileStatus.REJECTED.value,
                 "reason": rejection_reason,
             }
 

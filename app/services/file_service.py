@@ -11,7 +11,7 @@ from fastapi import UploadFile
 
 from app.core.config import settings
 from app.core.database import db
-from app.models.enums import FileStatus
+from app.models.enums import BatchStatus, FileStatus
 from app.models.processing import UploadResponse
 from app.services.processing_service import ProcessingService
 from app.utils.file_utils import FileValidator, calculate_content_hash, generate_safe_filename
@@ -51,7 +51,7 @@ class FileService:
             "processed_files": 0,
             "completed_files": 0,
             "failed_files": 0,
-            "status": "created",
+            "status": BatchStatus.CREATED.value,  # Use enum value
             "created_at": datetime.utcnow().isoformat(),
         }
 
@@ -78,7 +78,9 @@ class FileService:
         # Update job with results
         await db.supabase.table("processing_jobs").update(
             {
-                "status": "uploaded" if uploaded_files else "failed",
+                "status": BatchStatus.PROCESSING.value
+                if uploaded_files
+                else BatchStatus.FAILED.value,
                 "processed_files": len(uploaded_files),
                 "failed_files": len(failed_files),
             }

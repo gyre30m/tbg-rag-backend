@@ -4,7 +4,7 @@ Text extraction service for processing uploaded documents.
 
 import logging
 from io import BytesIO
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 # Try to import document processing libraries with fallbacks
 try:
@@ -36,7 +36,7 @@ class ExtractionService:
     def __init__(self):
         self.max_text_length = 10_000_000  # 10MB text limit
 
-    async def extract_text_from_file(self, file_id: str) -> Dict[str, any]:
+    async def extract_text_from_file(self, file_id: str) -> Dict[str, Any]:
         """
         Extract text from a processing file.
 
@@ -72,7 +72,7 @@ class ExtractionService:
             if extraction_result["success"]:
                 # Save extracted text
                 await self._save_extracted_text(file_id, extraction_result)
-                await self._update_file_status(file_id, FileStatus.TEXT_EXTRACTED)
+                await self._update_file_status(file_id, FileStatus.ANALYZING_METADATA)
 
                 logger.info(f"Successfully extracted text from file {file_id}")
                 return {
@@ -94,7 +94,7 @@ class ExtractionService:
             )
             return {"success": False, "file_id": file_id, "error": str(e)}
 
-    async def _extract_text_by_type(self, content: bytes, mime_type: str) -> Dict[str, any]:
+    async def _extract_text_by_type(self, content: bytes, mime_type: str) -> Dict[str, Any]:
         """Extract text based on file MIME type."""
         try:
             if mime_type == "application/pdf":
@@ -115,7 +115,7 @@ class ExtractionService:
             logger.error(f"Text extraction error for MIME type {mime_type}: {e}")
             return {"success": False, "error": f"Extraction failed: {str(e)}"}
 
-    async def _extract_from_pdf(self, content: bytes) -> Dict[str, any]:
+    async def _extract_from_pdf(self, content: bytes) -> Dict[str, Any]:
         """Extract text from PDF using PyMuPDF."""
         if not PYMUPDF_AVAILABLE:
             return {
@@ -156,7 +156,7 @@ class ExtractionService:
         except Exception as e:
             return {"success": False, "error": f"PDF extraction failed: {str(e)}"}
 
-    async def _extract_from_docx(self, content: bytes) -> Dict[str, any]:
+    async def _extract_from_docx(self, content: bytes) -> Dict[str, Any]:
         """Extract text from DOCX using python-docx."""
         if not PYTHON_DOCX_AVAILABLE:
             return {
@@ -194,7 +194,7 @@ class ExtractionService:
         except Exception as e:
             return {"success": False, "error": f"DOCX extraction failed: {str(e)}"}
 
-    async def _extract_from_text(self, content: bytes) -> Dict[str, any]:
+    async def _extract_from_text(self, content: bytes) -> Dict[str, Any]:
         """Extract text from plain text files."""
         try:
             # Try UTF-8 first, fallback to latin-1
@@ -232,7 +232,7 @@ class ExtractionService:
             logger.error(f"Failed to download file {storage_path}: {e}")
             raise
 
-    async def _save_extracted_text(self, file_id: str, extraction_result: Dict[str, any]):
+    async def _save_extracted_text(self, file_id: str, extraction_result: Dict[str, Any]):
         """Save extracted text and metadata to database."""
         try:
             update_data = {

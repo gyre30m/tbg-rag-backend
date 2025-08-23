@@ -10,6 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.database import db
 from app.core.security import verify_jwt_token
+from app.models.enums import FileStatus
 from app.services.processing_service import ProcessingService
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ async def list_files_pending_review(
                 "id, batch_id, original_filename, ai_title, ai_doc_type, ai_doc_category, "
                 "ai_description, page_count, word_count, created_at, updated_at"
             )
-            .eq("status", "ready_for_review")
+            .eq("status", FileStatus.REVIEW_PENDING.value)
             .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
             .execute()
@@ -140,9 +141,9 @@ async def get_processing_file_details(
 
         # Get chunk count if embeddings were generated
         if file_data["status"] in [
-            "embeddings_generated",
-            "ready_for_review",
-            "approved_for_library",
+            FileStatus.PROCESSING_COMPLETE.value,
+            FileStatus.REVIEW_PENDING.value,
+            FileStatus.APPROVED.value,
         ]:
             chunks_result = (
                 await db.supabase.table("document_chunks")
@@ -269,10 +270,9 @@ async def retry_file_processing(
 
         # Check if retry is allowed
         if current_status not in [
-            "extraction_failed",
-            "ai_failed",
-            "embedding_failed",
-            "processing_failed",
+            FileStatus.EXTRACTION_FAILED.value,
+            FileStatus.ANALYSIS_FAILED.value,
+            FileStatus.EMBEDDING_FAILED.value,
         ]:
             raise HTTPException(
                 status_code=400, detail=f"Cannot retry file with status: {current_status}"

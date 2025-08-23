@@ -112,11 +112,11 @@ async def handle_file_processing_completed(payload: Dict[str, Any]) -> Dict[str,
 
         # Map webhook status to internal status
         status_mapping = {
-            "success": FileStatus.READY_FOR_REVIEW,
-            "failed": FileStatus.PROCESSING_FAILED,
-            "text_extracted": FileStatus.TEXT_EXTRACTED,
-            "metadata_extracted": FileStatus.METADATA_EXTRACTED,
-            "embeddings_generated": FileStatus.EMBEDDINGS_GENERATED,
+            "success": FileStatus.REVIEW_PENDING,
+            "failed": FileStatus.EXTRACTION_FAILED,
+            "text_extracted": FileStatus.ANALYZING_METADATA,
+            "metadata_extracted": FileStatus.GENERATING_EMBEDDINGS,
+            "embeddings_generated": FileStatus.PROCESSING_COMPLETE,
         }
 
         new_status = status_mapping.get(processing_status)
@@ -173,20 +173,19 @@ async def handle_batch_processing_completed(payload: Dict[str, Any]) -> Dict[str
         files_by_status = result["files_by_status"]
 
         # Calculate final statistics
-        completed_files = len(files_by_status.get("ready_for_review", []))
-        completed_files += len(files_by_status.get("approved_for_library", []))
-        failed_files = len(files_by_status.get("processing_failed", []))
-        failed_files += len(files_by_status.get("extraction_failed", []))
-        failed_files += len(files_by_status.get("ai_failed", []))
+        completed_files = len(files_by_status.get("review_pending", []))
+        completed_files += len(files_by_status.get("approved", []))
+        failed_files = len(files_by_status.get("extraction_failed", []))
+        failed_files += len(files_by_status.get("analysis_failed", []))
         failed_files += len(files_by_status.get("embedding_failed", []))
 
         # Determine final batch status
         from app.models.enums import BatchStatus
 
         if failed_files == 0:
-            final_status = BatchStatus.COMPLETED
+            final_status = BatchStatus.PROCESSING_COMPLETE
         elif completed_files > 0:
-            final_status = BatchStatus.PARTIALLY_FAILED
+            final_status = BatchStatus.PARTIALLY_COMPLETED
         else:
             final_status = BatchStatus.FAILED
 
@@ -236,7 +235,7 @@ async def handle_processing_error(payload: Dict[str, Any]) -> Dict[str, Any]:
             # Update file with error status
             await db.supabase.table("processing_files").update(
                 {
-                    "status": FileStatus.PROCESSING_FAILED.value,
+                    "status": FileStatus.EXTRACTION_FAILED.value,
                     "error_message": error_message,
                     "updated_at": datetime.utcnow().isoformat(),
                 }

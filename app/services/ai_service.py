@@ -57,7 +57,7 @@ class AIService:
                 raise ValueError(f"No extracted text found for file {file_id}")
 
             # Update status to extracting metadata
-            await self._update_file_status(file_id, FileStatus.EXTRACTING_METADATA)
+            await self._update_file_status(file_id, FileStatus.ANALYZING_METADATA)
 
             # Extract metadata using AI
             metadata_result = await self._extract_metadata_with_ai(
@@ -67,7 +67,7 @@ class AIService:
             if metadata_result["success"]:
                 # Save metadata to database
                 await self._save_metadata(file_id, metadata_result["metadata"])
-                await self._update_file_status(file_id, FileStatus.METADATA_EXTRACTED)
+                await self._update_file_status(file_id, FileStatus.GENERATING_EMBEDDINGS)
 
                 logger.info(f"Successfully extracted metadata from file {file_id}")
                 return {
@@ -77,13 +77,15 @@ class AIService:
                 }
             else:
                 await self._update_file_status(
-                    file_id, FileStatus.AI_FAILED, error_message=metadata_result["error"]
+                    file_id, FileStatus.ANALYSIS_FAILED, error_message=metadata_result["error"]
                 )
                 return {"success": False, "file_id": file_id, "error": metadata_result["error"]}
 
         except Exception as e:
             logger.error(f"AI metadata extraction failed for file {file_id}: {e}")
-            await self._update_file_status(file_id, FileStatus.AI_FAILED, error_message=str(e))
+            await self._update_file_status(
+                file_id, FileStatus.ANALYSIS_FAILED, error_message=str(e)
+            )
             return {"success": False, "file_id": file_id, "error": str(e)}
 
     async def _extract_metadata_with_ai(self, text: str, filename: str) -> Dict[str, Any]:

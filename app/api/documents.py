@@ -10,6 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.security import verify_jwt_token
 from app.models.documents import DocumentSearchRequest, DocumentUpdate, VectorSearchResponse
+from app.models.enums import DocumentStatus, FileStatus
 from app.models.processing import UploadResponse
 from app.services.embedding_service import EmbeddingService
 from app.services.file_service import FileService
@@ -197,7 +198,7 @@ async def list_library_documents(
                 "id, title, authors, publication_date, doc_type, doc_category, "
                 "description, keywords, page_count, word_count, created_at, reviewed_by"
             )
-            .eq("status", "active")
+            .eq("status", DocumentStatus.ACTIVE.value)
         )
 
         # Apply filters
@@ -260,7 +261,7 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
         FROM documents d
         JOIN processing_files pf ON d.id = pf.document_id
         WHERE d.is_reviewed = false
-        AND pf.status IN ('review_pending', 'review_in_progress')
+        AND pf.status IN ('review_pending', 'under_review')
         ORDER BY pf.created_at ASC
         """
 
@@ -297,7 +298,7 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
         stats_query = """
         SELECT
             COUNT(*) FILTER (WHERE pf.status = 'review_pending') as total_pending,
-            COUNT(*) FILTER (WHERE pf.status = 'review_in_progress') as total_in_progress
+            COUNT(*) FILTER (WHERE pf.status = 'under_review') as total_in_progress
         FROM documents d
         JOIN processing_files pf ON d.id = pf.document_id
         WHERE d.is_reviewed = false
@@ -401,7 +402,7 @@ async def update_document_metadata(
 
         # Update processing file status to track review session
         processing_update = {
-            "status": "review_in_progress",
+            "status": FileStatus.UNDER_REVIEW.value,
             "reviewed_by": user_id,
             "review_started_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
@@ -552,7 +553,7 @@ async def delete_document(
             await db.supabase.table("documents")
             .update(
                 {
-                    "status": "deleted",
+                    "status": DocumentStatus.DELETED.value,
                     "deleted_by": user_id,
                     "deleted_at": datetime.utcnow().isoformat(),
                 }
