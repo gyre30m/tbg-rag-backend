@@ -142,7 +142,7 @@ class FileService:
             storage_path = f"uploads/{safe_filename}"
 
             # Upload to Supabase Storage
-            upload_result = db.supabase.storage.from_("documents").upload(
+            upload_result = await db.supabase.storage.from_("documents").upload(
                 storage_path, content, {"content-type": file.content_type}
             )
 
@@ -209,7 +209,7 @@ class FileService:
             File content as bytes
         """
         try:
-            download_result = db.supabase.storage.from_("documents").download(storage_path)
+            download_result = await db.supabase.storage.from_("documents").download(storage_path)
             return download_result
         except Exception as e:
             logger.error(f"Failed to download file {storage_path}: {e}")
@@ -226,7 +226,7 @@ class FileService:
             True if successful, False otherwise
         """
         try:
-            db.supabase.storage.from_("documents").remove([storage_path])
+            await db.supabase.storage.from_("documents").remove([storage_path])
             return True
         except Exception as e:
             logger.error(f"Failed to delete file {storage_path}: {e}")

@@ -226,7 +226,7 @@ class ExtractionService:
     async def _download_file_content(self, storage_path: str) -> bytes:
         """Download file content from Supabase storage."""
         try:
-            content = db.supabase.storage.from_("documents").download(storage_path)
+            content = await db.supabase.storage.from_("documents").download(storage_path)
             return content
         except Exception as e:
             logger.error(f"Failed to download file {storage_path}: {e}")
