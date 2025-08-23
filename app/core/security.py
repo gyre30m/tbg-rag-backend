@@ -56,7 +56,8 @@ class AuthManager:
         # Find matching key
         for key in jwks.get("keys", []):
             if key["kid"] == kid:
-                return jwt.PyJWK(key)
+                # Convert JWK to public key for ES256
+                return jwt.algorithms.ECAlgorithm.from_jwk(key)
 
         raise HTTPException(status_code=401, detail="Unable to find signing key")
 
@@ -67,26 +68,22 @@ class AuthManager:
             header = jwt.get_unverified_header(token)
             logger.debug(f"JWT header: {header}")
 
-            # Get the signing key
-            signing_key = await self.get_signing_key(token)
+            # Get the public key from JWKS
+            public_key = await self.get_signing_key(token)
 
-            # Decode JWT token using ES256 - first try without audience validation
+            # Decode JWT token using ES256 - try without audience first for debugging
+            logger.info("Attempting JWT decode with ES256")
             try:
                 payload = jwt.decode(
                     token,
-                    signing_key.key,
-                    algorithms=[settings.jwt_algorithm],
-                    audience="authenticated",  # Supabase audience
+                    public_key,
+                    algorithms=["ES256"],
+                    options={"verify_aud": False},  # Skip audience validation for now
                 )
-            except jwt.InvalidAudienceError:
-                # Try without audience validation for debugging
-                logger.info("Trying JWT decode without audience validation")
-                payload = jwt.decode(
-                    token,
-                    signing_key.key,
-                    algorithms=[settings.jwt_algorithm],
-                    options={"verify_aud": False},
-                )
+                logger.info("JWT decode succeeded")
+            except jwt.InvalidTokenError as e:
+                logger.error(f"JWT decode failed: {e}")
+                raise
 
             # Log payload for debugging (without sensitive data)
             logger.debug(f"JWT payload keys: {list(payload.keys())}")
@@ -98,7 +95,7 @@ class AuthManager:
         except jwt.ExpiredSignatureError:
             raise HTTPException(status_code=401, detail="Token expired")
         except jwt.InvalidTokenError as e:
-            logger.warning(f"Invalid token: {e}")
+            logger.error(f"JWT validation failed: {e}")
             raise HTTPException(status_code=401, detail="Invalid token")
         except HTTPException:
             raise
