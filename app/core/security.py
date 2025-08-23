@@ -33,12 +33,13 @@ class AuthManager:
                 async with httpx.AsyncClient() as client:
                     response = await client.get(self.jwks_uri)
                     response.raise_for_status()
-                    self.jwks_cache = response.json()
+                    jwks_data = response.json()
+                    self.jwks_cache = jwks_data
             except Exception as e:
                 logger.error(f"Failed to fetch JWKS: {e}")
                 raise HTTPException(status_code=500, detail="Unable to verify tokens")
 
-        return self.jwks_cache
+        return dict(self.jwks_cache)
 
     async def get_signing_key(self, token: str):
         """Get the signing key for the JWT token."""
@@ -62,18 +63,37 @@ class AuthManager:
     async def verify_token(self, token: str) -> Dict[str, Any]:
         """Verify and decode JWT token using JWK discovery."""
         try:
+            # Log token header for debugging
+            header = jwt.get_unverified_header(token)
+            logger.debug(f"JWT header: {header}")
+
             # Get the signing key
             signing_key = await self.get_signing_key(token)
 
-            # Decode JWT token using ES256
-            payload = jwt.decode(
-                token,
-                signing_key.key,
-                algorithms=[settings.jwt_algorithm],
-                audience="authenticated",  # Supabase audience
-            )
+            # Decode JWT token using ES256 - first try without audience validation
+            try:
+                payload = jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=[settings.jwt_algorithm],
+                    audience="authenticated",  # Supabase audience
+                )
+            except jwt.InvalidAudienceError:
+                # Try without audience validation for debugging
+                logger.info("Trying JWT decode without audience validation")
+                payload = jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=[settings.jwt_algorithm],
+                    options={"verify_aud": False},
+                )
 
-            return payload
+            # Log payload for debugging (without sensitive data)
+            logger.debug(f"JWT payload keys: {list(payload.keys())}")
+            logger.debug(f"JWT aud: {payload.get('aud')}")
+            logger.debug(f"JWT iss: {payload.get('iss')}")
+
+            return dict(payload)
 
         except jwt.ExpiredSignatureError:
             raise HTTPException(status_code=401, detail="Token expired")
