@@ -438,20 +438,8 @@ async def get_document_stats(current_user: Dict[str, Any] = Depends(get_current_
     try:
         from app.core.database import db
 
-        # Query document counts by type
-        # Only include reviewed documents that are in the main library
-        stats_query = """
-        SELECT
-            doc_type,
-            COUNT(*) as count
-        FROM documents
-        WHERE is_reviewed = true
-        AND is_deleted = false
-        AND is_archived = false
-        GROUP BY doc_type
-        """
-
-        result = await db.supabase.rpc("execute_sql", {"query": stats_query}).execute()
+        # Query document counts by type using the new RPC function
+        result = await db.supabase.rpc("get_document_stats").execute()
 
         # Initialize all document types to 0
         stats = {
