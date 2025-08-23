@@ -4,6 +4,7 @@ File service for handling document uploads and storage operations.
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Any, Dict, List
 from uuid import uuid4
@@ -38,7 +39,8 @@ class FileService:
         Returns:
             UploadResponse with job details and results
         """
-        logger.info(f"Starting upload of {len(files)} files for user {user_id}")
+        start_time = time.time()
+        logger.info(f"🔄 UPLOAD START: {len(files)} files for user {user_id}")
 
         # Validate batch size
         if len(files) == 0:
@@ -56,24 +58,32 @@ class FileService:
             "created_at": datetime.utcnow().isoformat(),
         }
 
+        logger.info(f"📝 Creating processing job for {len(files)} files")
         job_result = db.supabase.table("processing_jobs").insert(job_data).execute()
         job_id = job_result.data[0]["id"]
+        logger.info(f"✅ Processing job created: {job_id}")
 
         uploaded_files = []
         failed_files = []
 
         # Process each file
-        for file in files:
+        for i, file in enumerate(files, 1):
+            file_start = time.time()
+            logger.info(f"📄 Processing file {i}/{len(files)}: {file.filename} ({file.size} bytes)")
             try:
                 file_result = await self._process_single_file(file, job_id, user_id)
+                file_duration = time.time() - file_start
 
                 if file_result["success"]:
                     uploaded_files.append(file_result["file_id"])
+                    logger.info(f"✅ File processed successfully: {file.filename} in {file_duration:.2f}s")
                 else:
                     failed_files.append({"filename": file.filename, "error": file_result["error"]})
+                    logger.error(f"❌ File processing failed: {file.filename} - {file_result['error']} ({file_duration:.2f}s)")
 
             except Exception as e:
-                logger.error(f"Failed to process file {file.filename}: {e}")
+                file_duration = time.time() - file_start
+                logger.error(f"❌ Exception processing file {file.filename}: {e} ({file_duration:.2f}s)")
                 failed_files.append({"filename": file.filename, "error": str(e)})
 
         # Update job with results
@@ -99,6 +109,9 @@ class FileService:
             success_count=len(uploaded_files),
             error_count=len(failed_files),
         )
+        
+        total_duration = time.time() - start_time
+        logger.info(f"🎯 UPLOAD COMPLETE: {len(uploaded_files)} successful, {len(failed_files)} failed in {total_duration:.2f}s")
 
     async def _process_single_file(
         self, file: UploadFile, job_id: str, user_id: str

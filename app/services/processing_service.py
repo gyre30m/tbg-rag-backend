@@ -4,6 +4,7 @@ Processing orchestration service for managing document processing workflows.
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -36,18 +37,20 @@ class ProcessingService:
             True if successfully queued
         """
         try:
-            logger.info(f"Queuing file {file_id} for text extraction")
+            logger.info(f"🚀 QUEUE: Starting text extraction for file {file_id}")
 
             # Update file status to queued
             self._update_file_status(file_id, FileStatus.QUEUED)
 
             # Start background processing (fire and forget)
+            logger.info(f"🔄 QUEUE: Creating async task for file {file_id}")
             asyncio.create_task(self._process_file_pipeline(file_id))
+            logger.info(f"✅ QUEUE: File {file_id} queued successfully")
 
             return True
 
         except Exception as e:
-            logger.error(f"Failed to queue file {file_id}: {e}")
+            logger.error(f"❌ QUEUE: Failed to queue file {file_id}: {e}")
             return False
 
     async def process_batch(self, batch_id: str) -> Dict[str, Any]:
@@ -139,37 +142,55 @@ class ProcessingService:
         Returns:
             Dict with processing results
         """
-        logger.info(f"Starting pipeline processing for file {file_id}")
+        start_time = time.time()
+        logger.info(f"🔧 PIPELINE START: Processing file {file_id}")
 
         try:
             # Step 1: Text Extraction
+            step_start = time.time()
+            logger.info(f"📝 STEP 1: Starting text extraction for file {file_id}")
             extraction_result = await self.extraction_service.extract_text_from_file(file_id)
+            step_duration = time.time() - step_start
+            
             if not extraction_result["success"]:
                 logger.error(
-                    f"Text extraction failed for file {file_id}: {extraction_result['error']}"
+                    f"❌ STEP 1 FAILED: Text extraction for file {file_id}: {extraction_result['error']} ({step_duration:.2f}s)"
                 )
                 return dict(extraction_result)
+            logger.info(f"✅ STEP 1 SUCCESS: Text extraction completed for file {file_id} in {step_duration:.2f}s")
 
             # Step 2: AI Metadata Extraction
+            step_start = time.time()
+            logger.info(f"🤖 STEP 2: Starting AI metadata extraction for file {file_id}")
             metadata_result = await self.ai_service.extract_metadata(file_id)
+            step_duration = time.time() - step_start
+            
             if not metadata_result["success"]:
                 logger.error(
-                    f"Metadata extraction failed for file {file_id}: {metadata_result['error']}"
+                    f"❌ STEP 2 FAILED: Metadata extraction for file {file_id}: {metadata_result['error']} ({step_duration:.2f}s)"
                 )
                 return dict(metadata_result)
+            logger.info(f"✅ STEP 2 SUCCESS: AI metadata extraction completed for file {file_id} in {step_duration:.2f}s")
 
             # Step 3: Embedding Generation
+            step_start = time.time()
+            logger.info(f"🔗 STEP 3: Starting embedding generation for file {file_id}")
             embedding_result = await self.embedding_service.generate_embeddings(file_id)
+            step_duration = time.time() - step_start
+            
             if not embedding_result["success"]:
                 logger.error(
-                    f"Embedding generation failed for file {file_id}: {embedding_result['error']}"
+                    f"❌ STEP 3 FAILED: Embedding generation for file {file_id}: {embedding_result['error']} ({step_duration:.2f}s)"
                 )
                 return dict(embedding_result)
+            logger.info(f"✅ STEP 3 SUCCESS: Embedding generation completed for file {file_id} in {step_duration:.2f}s")
 
             # Mark file as ready for review
+            logger.info(f"📋 Marking file {file_id} as ready for review")
             self._update_file_status(file_id, FileStatus.REVIEW_PENDING)
 
-            logger.info(f"Pipeline processing completed successfully for file {file_id}")
+            total_duration = time.time() - start_time
+            logger.info(f"🎯 PIPELINE COMPLETE: File {file_id} processed successfully in {total_duration:.2f}s")
 
             return {
                 "success": True,
@@ -182,7 +203,8 @@ class ProcessingService:
             }
 
         except Exception as e:
-            logger.error(f"Pipeline processing failed for file {file_id}: {e}")
+            total_duration = time.time() - start_time
+            logger.error(f"💥 PIPELINE FAILED: File {file_id} failed after {total_duration:.2f}s: {e}")
             self._update_file_status(file_id, FileStatus.EXTRACTION_FAILED, error_message=str(e))
             return {"success": False, "file_id": file_id, "error": str(e)}
 

@@ -38,6 +38,7 @@ app.add_middleware(
         "http://localhost:3000",  # NextJS dev server
         "http://127.0.0.1:3000",
         "https://webapp-frontend-mu.vercel.app",  # Production Vercel deployment
+        "https://rag.the-bradley-group.com",  # Custom domain
     ],
     allow_credentials=True,
     allow_methods=["*"],

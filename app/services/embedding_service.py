@@ -4,6 +4,7 @@ Embedding service for generating vector embeddings from document text.
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -42,7 +43,8 @@ class EmbeddingService:
         Returns:
             Dict with generation results
         """
-        logger.info(f"Starting embedding generation for file {file_id}")
+        start_time = time.time()
+        logger.info(f"🔗 EMBEDDING START: File {file_id}")
 
         if not self.openai_client:
             return {"success": False, "file_id": file_id, "error": "OpenAI API key not configured"}
@@ -64,24 +66,38 @@ class EmbeddingService:
             self._update_file_status(file_id, FileStatus.GENERATING_EMBEDDINGS)
 
             # Split text into chunks
+            text_length = len(file_record["extracted_text"])
+            logger.info(f"📄 CHUNKING: File {file_id} has {text_length} characters")
             chunks = self._split_text_into_chunks(file_record["extracted_text"])
+            logger.info(f"✂️ CHUNKS: File {file_id} split into {len(chunks)} chunks")
 
             if len(chunks) > self.max_chunks_per_document:
                 logger.warning(
-                    f"File {file_id} has {len(chunks)} chunks, truncating to {self.max_chunks_per_document}"
+                    f"⚠️ TRUNCATING: File {file_id} has {len(chunks)} chunks, truncating to {self.max_chunks_per_document}"
                 )
                 chunks = chunks[: self.max_chunks_per_document]
 
             # Generate embeddings for chunks
+            embed_start = time.time()
+            logger.info(f"🧠 OPENAI: Generating embeddings for {len(chunks)} chunks from file {file_id}")
             embeddings_result = await self._generate_chunk_embeddings(chunks)
+            embed_duration = time.time() - embed_start
 
             if embeddings_result["success"]:
+                logger.info(f"✅ OPENAI: Generated embeddings for file {file_id} in {embed_duration:.2f}s")
+                
                 # Save embeddings to database
+                save_start = time.time()
+                logger.info(f"💾 DATABASE: Saving {len(chunks)} chunks for file {file_id}")
                 await self._save_embeddings(file_id, chunks, embeddings_result["embeddings"])
-                self._update_file_status(file_id, FileStatus.PROCESSING_COMPLETE)
+                save_duration = time.time() - save_start
+                logger.info(f"✅ DATABASE: Saved chunks for file {file_id} in {save_duration:.2f}s")
+                
+                self._update_file_status(file_id, FileStatus.REVIEW_PENDING)
 
+                total_duration = time.time() - start_time
                 logger.info(
-                    f"Successfully generated embeddings for file {file_id} ({len(chunks)} chunks)"
+                    f"🎯 EMBEDDING COMPLETE: File {file_id} ({len(chunks)} chunks) in {total_duration:.2f}s"
                 )
                 return {
                     "success": True,
