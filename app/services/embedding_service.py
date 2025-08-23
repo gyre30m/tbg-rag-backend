@@ -50,7 +50,7 @@ class EmbeddingService:
         try:
             # Get file record with extracted text
             file_result = (
-                await db.supabase.table("processing_files").select("*").eq("id", file_id).execute()
+                db.supabase.table("processing_files").select("*").eq("id", file_id).execute()
             )
             if not file_result.data:
                 raise ValueError(f"File {file_id} not found")
@@ -61,7 +61,7 @@ class EmbeddingService:
                 raise ValueError(f"No extracted text found for file {file_id}")
 
             # Update status to generating embeddings
-            await self._update_file_status(file_id, FileStatus.GENERATING_EMBEDDINGS)
+            self._update_file_status(file_id, FileStatus.GENERATING_EMBEDDINGS)
 
             # Split text into chunks
             chunks = self._split_text_into_chunks(file_record["extracted_text"])
@@ -78,7 +78,7 @@ class EmbeddingService:
             if embeddings_result["success"]:
                 # Save embeddings to database
                 await self._save_embeddings(file_id, chunks, embeddings_result["embeddings"])
-                await self._update_file_status(file_id, FileStatus.PROCESSING_COMPLETE)
+                self._update_file_status(file_id, FileStatus.PROCESSING_COMPLETE)
 
                 logger.info(
                     f"Successfully generated embeddings for file {file_id} ({len(chunks)} chunks)"
@@ -94,16 +94,14 @@ class EmbeddingService:
                     ),
                 }
             else:
-                await self._update_file_status(
+                self._update_file_status(
                     file_id, FileStatus.EMBEDDING_FAILED, error_message=embeddings_result["error"]
                 )
                 return {"success": False, "file_id": file_id, "error": embeddings_result["error"]}
 
         except Exception as e:
             logger.error(f"Embedding generation failed for file {file_id}: {e}")
-            await self._update_file_status(
-                file_id, FileStatus.EMBEDDING_FAILED, error_message=str(e)
-            )
+            self._update_file_status(file_id, FileStatus.EMBEDDING_FAILED, error_message=str(e))
             return {"success": False, "file_id": file_id, "error": str(e)}
 
     def _split_text_into_chunks(self, text: str) -> List[str]:
@@ -200,10 +198,10 @@ class EmbeddingService:
             batch_size = 100
             for i in range(0, len(chunk_data), batch_size):
                 batch = chunk_data[i : i + batch_size]
-                await db.supabase.table("document_chunks").insert(batch).execute()
+                db.supabase.table("document_chunks").insert(batch).execute()
 
             # Update processing file with chunk count
-            await db.supabase.table("processing_files").update({"chunk_count": len(chunks)}).eq(
+            db.supabase.table("processing_files").update({"chunk_count": len(chunks)}).eq(
                 "id", file_id
             ).execute()
 
@@ -271,7 +269,7 @@ class EmbeddingService:
             """
 
             # Execute similarity search
-            result = await db.supabase.rpc("sql_query", {"query": sql_query}).execute()
+            result = db.supabase.rpc("sql_query", {"query": sql_query}).execute()
 
             # Filter by similarity threshold
             similar_chunks = []
@@ -295,7 +293,7 @@ class EmbeddingService:
             logger.error(f"Similarity search failed: {e}")
             return []
 
-    async def _update_file_status(self, file_id: str, status: FileStatus, **kwargs):
+    def _update_file_status(self, file_id: str, status: FileStatus, **kwargs):
         """Update file processing status."""
         try:
             update_data = {
@@ -304,9 +302,7 @@ class EmbeddingService:
                 **kwargs,
             }
 
-            await db.supabase.table("processing_files").update(update_data).eq(
-                "id", file_id
-            ).execute()
+            db.supabase.table("processing_files").update(update_data).eq("id", file_id).execute()
 
         except Exception as e:
             logger.error(f"Failed to update file {file_id} status: {e}")

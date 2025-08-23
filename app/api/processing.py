@@ -104,7 +104,7 @@ async def list_files_pending_review(
     """
     try:
         result = (
-            await db.supabase.table("processing_files")
+            db.supabase.table("processing_files")
             .select(
                 "id, batch_id, original_filename, ai_title, ai_doc_type, ai_doc_category, "
                 "ai_description, page_count, word_count, created_at, updated_at"
@@ -133,7 +133,7 @@ async def get_processing_file_details(
     """
     try:
         # Get processing file details
-        result = await db.supabase.table("processing_files").select("*").eq("id", file_id).execute()
+        result = db.supabase.table("processing_files").select("*").eq("id", file_id).execute()
         if not result.data:
             raise HTTPException(status_code=404, detail="Processing file not found")
 
@@ -146,7 +146,7 @@ async def get_processing_file_details(
             FileStatus.APPROVED.value,
         ]:
             chunks_result = (
-                await db.supabase.table("document_chunks")
+                db.supabase.table("document_chunks")
                 .select("id", count="exact")
                 .eq("processing_file_id", file_id)
                 .execute()
@@ -174,7 +174,7 @@ async def get_extracted_text(
     """
     try:
         result = (
-            await db.supabase.table("processing_files")
+            db.supabase.table("processing_files")
             .select("extracted_text, status")
             .eq("id", file_id)
             .execute()
@@ -223,7 +223,7 @@ async def get_file_chunks(
     """
     try:
         result = (
-            await db.supabase.table("document_chunks")
+            db.supabase.table("document_chunks")
             .select("id, chunk_index, text_content, token_count, created_at")
             .eq("processing_file_id", file_id)
             .order("chunk_index")
@@ -256,7 +256,7 @@ async def retry_file_processing(
     try:
         # Get current file status
         result = (
-            await db.supabase.table("processing_files")
+            db.supabase.table("processing_files")
             .select("status, retry_count")
             .eq("id", file_id)
             .execute()
@@ -286,7 +286,7 @@ async def retry_file_processing(
 
         from app.models.enums import FileStatus
 
-        await db.supabase.table("processing_files").update(
+        db.supabase.table("processing_files").update(
             {
                 "status": FileStatus.UPLOADED.value,
                 "retry_count": retry_count + 1,
@@ -296,7 +296,7 @@ async def retry_file_processing(
         ).eq("id", file_id).execute()
 
         # Queue for processing
-        success = await processing_service.queue_text_extraction(file_id)
+        success = processing_service.queue_text_extraction(file_id)
         if not success:
             raise HTTPException(status_code=500, detail="Failed to queue file for retry")
 
@@ -322,11 +322,11 @@ async def get_processing_stats(current_user: Dict[str, Any] = Depends(get_curren
     """
     try:
         # Get file status counts
-        file_stats_result = await db.supabase.rpc("get_file_status_counts").execute()
+        file_stats_result = db.supabase.rpc("get_file_status_counts").execute()
         file_stats = file_stats_result.data if file_stats_result.data else []
 
         # Get batch status counts
-        batch_stats_result = await db.supabase.rpc("get_batch_status_counts").execute()
+        batch_stats_result = db.supabase.rpc("get_batch_status_counts").execute()
         batch_stats = batch_stats_result.data if batch_stats_result.data else []
 
         # Get recent activity (last 24 hours)
@@ -335,14 +335,14 @@ async def get_processing_stats(current_user: Dict[str, Any] = Depends(get_curren
         yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
 
         recent_files_result = (
-            await db.supabase.table("processing_files")
+            db.supabase.table("processing_files")
             .select("id", count="exact")
             .gte("created_at", yesterday)
             .execute()
         )
 
         recent_batches_result = (
-            await db.supabase.table("processing_jobs")
+            db.supabase.table("processing_jobs")
             .select("id", count="exact")
             .gte("created_at", yesterday)
             .execute()

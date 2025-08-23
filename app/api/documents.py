@@ -354,7 +354,7 @@ async def update_document_metadata(
         if metadata.doc_category is not None:
             update_data["doc_category"] = metadata.doc_category.value
         if metadata.authors is not None:
-            update_data["authors"] = metadata.authors
+            update_data["authors"] = ", ".join(metadata.authors) if metadata.authors else None
         if metadata.citation is not None:
             update_data["citation"] = metadata.citation
         if metadata.summary is not None:
@@ -377,10 +377,7 @@ async def update_document_metadata(
 
         # Check if document exists
         doc_check = (
-            await db.supabase.table("documents")
-            .select("id, is_reviewed")
-            .eq("id", document_id)
-            .execute()
+            db.supabase.table("documents").select("id, is_reviewed").eq("id", document_id).execute()
         )
 
         if not doc_check.data:
@@ -393,9 +390,7 @@ async def update_document_metadata(
             )
 
         # Update document metadata
-        result = (
-            await db.supabase.table("documents").update(update_data).eq("id", document_id).execute()
-        )
+        result = db.supabase.table("documents").update(update_data).eq("id", document_id).execute()
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Document not found")
@@ -408,7 +403,7 @@ async def update_document_metadata(
             "updated_at": datetime.utcnow().isoformat(),
         }
 
-        await db.supabase.table("processing_files").update(processing_update).eq(
+        db.supabase.table("processing_files").update(processing_update).eq(
             "document_id", document_id
         ).execute()
 
@@ -505,9 +500,7 @@ async def get_document_details(
         from app.core.database import db
 
         # Get document details
-        doc_result = (
-            await db.supabase.table("documents").select("*").eq("id", document_id).execute()
-        )
+        doc_result = db.supabase.table("documents").select("*").eq("id", document_id).execute()
         if not doc_result.data:
             raise HTTPException(status_code=404, detail="Document not found")
 
@@ -515,7 +508,7 @@ async def get_document_details(
 
         # Get document chunks count
         chunks_result = (
-            await db.supabase.table("document_chunks")
+            db.supabase.table("document_chunks")
             .select("id", count="exact")
             .eq("document_id", document_id)
             .execute()
@@ -550,7 +543,7 @@ async def delete_document(
 
         # Update document status to deleted
         result = (
-            await db.supabase.table("documents")
+            db.supabase.table("documents")
             .update(
                 {
                     "status": DocumentStatus.DELETED.value,

@@ -25,7 +25,7 @@ class ProcessingService:
         self.embedding_service = EmbeddingService()
         self.max_concurrent_files = 5  # Limit concurrent processing
 
-    async def queue_text_extraction(self, file_id: str) -> bool:
+    def queue_text_extraction(self, file_id: str) -> bool:
         """
         Queue a file for text extraction processing.
 
@@ -39,7 +39,7 @@ class ProcessingService:
             logger.info(f"Queuing file {file_id} for text extraction")
 
             # Update file status to queued
-            await self._update_file_status(file_id, FileStatus.QUEUED)
+            self._update_file_status(file_id, FileStatus.QUEUED)
 
             # Start background processing (fire and forget)
             asyncio.create_task(self._process_file_pipeline(file_id))
@@ -65,7 +65,7 @@ class ProcessingService:
         try:
             # Get all files in the batch
             files_result = (
-                await db.supabase.table("processing_files")
+                db.supabase.table("processing_files")
                 .select("id, status")
                 .eq("batch_id", batch_id)
                 .execute()
@@ -86,7 +86,7 @@ class ProcessingService:
                 }
 
             # Update batch status to processing
-            await self._update_batch_status(batch_id, BatchStatus.PROCESSING)
+            self._update_batch_status(batch_id, BatchStatus.PROCESSING)
 
             # Process files with concurrency control
             semaphore = asyncio.Semaphore(self.max_concurrent_files)
@@ -100,7 +100,7 @@ class ProcessingService:
 
             # Update batch with final status
             final_status = BatchStatus.PROCESSING_COMPLETE if failed == 0 else BatchStatus.FAILED
-            await self._update_batch_status(
+            self._update_batch_status(
                 batch_id, final_status, processed_files=successful, failed_files=failed
             )
 
@@ -119,7 +119,7 @@ class ProcessingService:
 
         except Exception as e:
             logger.error(f"Batch processing failed for batch {batch_id}: {e}")
-            await self._update_batch_status(batch_id, BatchStatus.FAILED, error_message=str(e))
+            self._update_batch_status(batch_id, BatchStatus.FAILED, error_message=str(e))
             return {"success": False, "batch_id": batch_id, "error": str(e)}
 
     async def _process_file_with_semaphore(
@@ -148,7 +148,7 @@ class ProcessingService:
                 logger.error(
                     f"Text extraction failed for file {file_id}: {extraction_result['error']}"
                 )
-                return extraction_result
+                return dict(extraction_result)
 
             # Step 2: AI Metadata Extraction
             metadata_result = await self.ai_service.extract_metadata(file_id)
@@ -156,7 +156,7 @@ class ProcessingService:
                 logger.error(
                     f"Metadata extraction failed for file {file_id}: {metadata_result['error']}"
                 )
-                return metadata_result
+                return dict(metadata_result)
 
             # Step 3: Embedding Generation
             embedding_result = await self.embedding_service.generate_embeddings(file_id)
@@ -164,10 +164,10 @@ class ProcessingService:
                 logger.error(
                     f"Embedding generation failed for file {file_id}: {embedding_result['error']}"
                 )
-                return embedding_result
+                return dict(embedding_result)
 
             # Mark file as ready for review
-            await self._update_file_status(file_id, FileStatus.REVIEW_PENDING)
+            self._update_file_status(file_id, FileStatus.REVIEW_PENDING)
 
             logger.info(f"Pipeline processing completed successfully for file {file_id}")
 
@@ -183,9 +183,7 @@ class ProcessingService:
 
         except Exception as e:
             logger.error(f"Pipeline processing failed for file {file_id}: {e}")
-            await self._update_file_status(
-                file_id, FileStatus.EXTRACTION_FAILED, error_message=str(e)
-            )
+            self._update_file_status(file_id, FileStatus.EXTRACTION_FAILED, error_message=str(e))
             return {"success": False, "file_id": file_id, "error": str(e)}
 
     async def approve_file_for_library(
@@ -207,7 +205,7 @@ class ProcessingService:
         try:
             # Get processing file record
             file_result = (
-                await db.supabase.table("processing_files").select("*").eq("id", file_id).execute()
+                db.supabase.table("processing_files").select("*").eq("id", file_id).execute()
             )
             if not file_result.data:
                 raise ValueError(f"File {file_id} not found")
@@ -245,11 +243,11 @@ class ProcessingService:
             }
 
             # Insert document record
-            document_result = await db.supabase.table("documents").insert(document_data).execute()
+            document_result = db.supabase.table("documents").insert(document_data).execute()
             document_id = document_result.data[0]["id"]
 
             # Update processing file status
-            await self._update_file_status(
+            self._update_file_status(
                 file_id,
                 FileStatus.APPROVED,
                 document_id=document_id,
@@ -259,7 +257,7 @@ class ProcessingService:
             )
 
             # Update document chunks to reference the new document
-            await db.supabase.table("document_chunks").update({"document_id": document_id}).eq(
+            db.supabase.table("document_chunks").update({"document_id": document_id}).eq(
                 "processing_file_id", file_id
             ).execute()
 
@@ -294,7 +292,7 @@ class ProcessingService:
 
         try:
             # Update processing file status
-            await self._update_file_status(
+            self._update_file_status(
                 file_id,
                 FileStatus.REJECTED,
                 reviewed_by=reviewer_id,
@@ -328,7 +326,7 @@ class ProcessingService:
         try:
             # Get batch info
             batch_result = (
-                await db.supabase.table("processing_jobs").select("*").eq("id", batch_id).execute()
+                db.supabase.table("processing_jobs").select("*").eq("id", batch_id).execute()
             )
             if not batch_result.data:
                 raise ValueError(f"Batch {batch_id} not found")
@@ -337,13 +335,13 @@ class ProcessingService:
 
             # Get file statuses
             files_result = (
-                await db.supabase.table("processing_files")
+                db.supabase.table("processing_files")
                 .select("id, original_filename, status, error_message, created_at, updated_at")
                 .eq("batch_id", batch_id)
                 .execute()
             )
 
-            files_by_status = {}
+            files_by_status: Dict[str, List[Dict[str, Any]]] = {}
             for file_record in files_result.data:
                 status = file_record["status"]
                 if status not in files_by_status:
@@ -362,7 +360,7 @@ class ProcessingService:
             logger.error(f"Failed to get processing status for batch {batch_id}: {e}")
             return {"success": False, "batch_id": batch_id, "error": str(e)}
 
-    async def _update_file_status(self, file_id: str, status: FileStatus, **kwargs):
+    def _update_file_status(self, file_id: str, status: FileStatus, **kwargs):
         """Update file processing status."""
         try:
             update_data = {
@@ -371,15 +369,13 @@ class ProcessingService:
                 **kwargs,
             }
 
-            await db.supabase.table("processing_files").update(update_data).eq(
-                "id", file_id
-            ).execute()
+            db.supabase.table("processing_files").update(update_data).eq("id", file_id).execute()
 
         except Exception as e:
             logger.error(f"Failed to update file {file_id} status: {e}")
             raise
 
-    async def _update_batch_status(self, batch_id: str, status: BatchStatus, **kwargs):
+    def _update_batch_status(self, batch_id: str, status: BatchStatus, **kwargs):
         """Update batch processing status."""
         try:
             update_data = {
@@ -388,9 +384,7 @@ class ProcessingService:
                 **kwargs,
             }
 
-            await db.supabase.table("processing_jobs").update(update_data).eq(
-                "id", batch_id
-            ).execute()
+            db.supabase.table("processing_jobs").update(update_data).eq("id", batch_id).execute()
 
         except Exception as e:
             logger.error(f"Failed to update batch {batch_id} status: {e}")

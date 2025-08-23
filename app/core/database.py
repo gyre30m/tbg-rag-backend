@@ -4,9 +4,10 @@ Handles both direct Supabase operations and raw SQL when needed.
 """
 
 import logging
+from typing import Optional
 
+import supabase
 from app.core.config import settings
-from supabase import Client, create_client
 
 logger = logging.getLogger(__name__)
 
@@ -15,13 +16,13 @@ class DatabaseManager:
     """Manages database connections and operations."""
 
     def __init__(self):
-        self._supabase_client: Client = None
+        self._supabase_client: Optional[supabase.Client] = None
 
-    @property
-    def supabase(self) -> Client:
+    @property  
+    def supabase(self) -> supabase.Client:
         """Get or create Supabase client."""
         if self._supabase_client is None:
-            self._supabase_client = create_client(
+            self._supabase_client = supabase.create_client(
                 settings.supabase_url,
                 settings.supabase_secret_key,  # Using secret key for backend operations
             )

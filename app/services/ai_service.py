@@ -46,7 +46,7 @@ class AIService:
         try:
             # Get file record with extracted text
             file_result = (
-                await db.supabase.table("processing_files").select("*").eq("id", file_id).execute()
+                db.supabase.table("processing_files").select("*").eq("id", file_id).execute()
             )
             if not file_result.data:
                 raise ValueError(f"File {file_id} not found")
@@ -57,7 +57,7 @@ class AIService:
                 raise ValueError(f"No extracted text found for file {file_id}")
 
             # Update status to extracting metadata
-            await self._update_file_status(file_id, FileStatus.ANALYZING_METADATA)
+            self._update_file_status(file_id, FileStatus.ANALYZING_METADATA)
 
             # Extract metadata using AI
             metadata_result = await self._extract_metadata_with_ai(
@@ -67,7 +67,7 @@ class AIService:
             if metadata_result["success"]:
                 # Save metadata to database
                 await self._save_metadata(file_id, metadata_result["metadata"])
-                await self._update_file_status(file_id, FileStatus.GENERATING_EMBEDDINGS)
+                self._update_file_status(file_id, FileStatus.GENERATING_EMBEDDINGS)
 
                 logger.info(f"Successfully extracted metadata from file {file_id}")
                 return {
@@ -76,16 +76,14 @@ class AIService:
                     "metadata": metadata_result["metadata"],
                 }
             else:
-                await self._update_file_status(
+                self._update_file_status(
                     file_id, FileStatus.ANALYSIS_FAILED, error_message=metadata_result["error"]
                 )
                 return {"success": False, "file_id": file_id, "error": metadata_result["error"]}
 
         except Exception as e:
             logger.error(f"AI metadata extraction failed for file {file_id}: {e}")
-            await self._update_file_status(
-                file_id, FileStatus.ANALYSIS_FAILED, error_message=str(e)
-            )
+            self._update_file_status(file_id, FileStatus.ANALYSIS_FAILED, error_message=str(e))
             return {"success": False, "file_id": file_id, "error": str(e)}
 
     async def _extract_metadata_with_ai(self, text: str, filename: str) -> Dict[str, Any]:
@@ -282,15 +280,13 @@ Return ONLY valid JSON with no additional text or formatting:
                 "ai_confidence_scores": metadata["confidence_scores"],
             }
 
-            await db.supabase.table("processing_files").update(update_data).eq(
-                "id", file_id
-            ).execute()
+            db.supabase.table("processing_files").update(update_data).eq("id", file_id).execute()
 
         except Exception as e:
             logger.error(f"Failed to save metadata for file {file_id}: {e}")
             raise
 
-    async def _update_file_status(self, file_id: str, status: FileStatus, **kwargs):
+    def _update_file_status(self, file_id: str, status: FileStatus, **kwargs):
         """Update file processing status."""
         try:
             update_data = {
@@ -299,9 +295,7 @@ Return ONLY valid JSON with no additional text or formatting:
                 **kwargs,
             }
 
-            await db.supabase.table("processing_files").update(update_data).eq(
-                "id", file_id
-            ).execute()
+            db.supabase.table("processing_files").update(update_data).eq("id", file_id).execute()
 
         except Exception as e:
             logger.error(f"Failed to update file {file_id} status: {e}")

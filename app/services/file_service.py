@@ -2,6 +2,7 @@
 File service for handling document uploads and storage operations.
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict, List
@@ -55,7 +56,7 @@ class FileService:
             "created_at": datetime.utcnow().isoformat(),
         }
 
-        job_result = await db.supabase.table("processing_jobs").insert(job_data).execute()
+        job_result = db.supabase.table("processing_jobs").insert(job_data).execute()
         job_id = job_result.data[0]["id"]
 
         uploaded_files = []
@@ -76,19 +77,19 @@ class FileService:
                 failed_files.append({"filename": file.filename, "error": str(e)})
 
         # Update job with results
-        await db.supabase.table("processing_jobs").update(
+        db.supabase.table("processing_jobs").update(
             {
                 "status": BatchStatus.PROCESSING.value
                 if uploaded_files
                 else BatchStatus.FAILED.value,
-                "processed_files": len(uploaded_files),
+                "processed_files": len(uploaded_files) + len(failed_files),
                 "failed_files": len(failed_files),
             }
         ).eq("id", job_id).execute()
 
         # Start background processing for successful uploads
         if uploaded_files:
-            await self._start_background_processing(uploaded_files)
+            asyncio.create_task(self._start_background_processing(uploaded_files))
 
         return UploadResponse(
             job_id=job_id,
@@ -128,7 +129,7 @@ class FileService:
 
             # Check for existing document with same hash
             existing = (
-                await db.supabase.table("documents")
+                db.supabase.table("documents")
                 .select("id")
                 .eq("content_hash", content_hash)
                 .execute()
@@ -142,7 +143,7 @@ class FileService:
             storage_path = f"uploads/{safe_filename}"
 
             # Upload to Supabase Storage
-            upload_result = await db.supabase.storage.from_("documents").upload(
+            upload_result = db.supabase.storage.from_("documents").upload(
                 storage_path, content, {"content-type": file.content_type}
             )
 
@@ -163,7 +164,7 @@ class FileService:
                 "created_at": datetime.utcnow().isoformat(),
             }
 
-            file_result = await db.supabase.table("processing_files").insert(file_data).execute()
+            file_result = db.supabase.table("processing_files").insert(file_data).execute()
             file_record_id = file_result.data[0]["id"]
 
             logger.info(f"Successfully uploaded file {file.filename} with ID {file_record_id}")
@@ -186,12 +187,12 @@ class FileService:
         # Queue each file for text extraction
         for file_id in file_ids:
             try:
-                await self.processing_service.queue_text_extraction(file_id)
+                self.processing_service.queue_text_extraction(file_id)
             except Exception as e:
                 logger.error(f"Failed to queue file {file_id} for processing: {e}")
 
                 # Mark file as failed
-                await db.supabase.table("processing_files").update(
+                db.supabase.table("processing_files").update(
                     {
                         "status": FileStatus.EXTRACTION_FAILED.value,
                         "error_message": f"Failed to queue for processing: {str(e)}",
@@ -209,8 +210,8 @@ class FileService:
             File content as bytes
         """
         try:
-            download_result = await db.supabase.storage.from_("documents").download(storage_path)
-            return download_result
+            download_result = db.supabase.storage.from_("documents").download(storage_path)
+            return bytes(download_result)
         except Exception as e:
             logger.error(f"Failed to download file {storage_path}: {e}")
             raise
@@ -226,7 +227,7 @@ class FileService:
             True if successful, False otherwise
         """
         try:
-            await db.supabase.storage.from_("documents").remove([storage_path])
+            db.supabase.storage.from_("documents").remove([storage_path])
             return True
         except Exception as e:
             logger.error(f"Failed to delete file {storage_path}: {e}")
@@ -251,9 +252,7 @@ class FileService:
                 **kwargs,
             }
 
-            await db.supabase.table("processing_files").update(update_data).eq(
-                "id", file_id
-            ).execute()
+            db.supabase.table("processing_files").update(update_data).eq("id", file_id).execute()
 
             logger.debug(f"Updated file {file_id} status to {status.value}")
             return True
