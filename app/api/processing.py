@@ -360,3 +360,39 @@ async def get_processing_stats(current_user: Dict[str, Any] = Depends(get_curren
     except Exception as e:
         logger.error(f"Stats retrieval failed: {e}")
         raise HTTPException(status_code=500, detail="Stats retrieval failed")
+
+
+@router.get("/logs", tags=["Processing"])
+async def get_processing_logs(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Get processing logs for batch jobs.
+
+    Returns recent processing activity including job status changes,
+    file completion events, and error details for troubleshooting.
+    """
+    try:
+        from app.core.database import db
+
+        result = db.supabase.rpc("get_processing_logs", {"limit_count": 100}).execute()
+
+        logs = []
+        if result.data:
+            for row in result.data:
+                log_entry = {
+                    "id": row.get("id"),
+                    "message": row.get("message"),
+                    "level": row.get("level"),
+                    "created_at": row.get("created_at"),
+                    "file_id": row.get("file_id"),
+                    "batch_id": row.get("batch_id"),
+                    "filename": row.get("filename"),
+                }
+                logs.append(log_entry)
+
+        total_logs = len(result.data) if result.data else 0
+
+        return {"logs": logs, "total_logs": total_logs}
+
+    except Exception as e:
+        logger.error(f"Processing logs failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get processing logs")
