@@ -264,7 +264,7 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
         ORDER BY pf.created_at ASC
         """
 
-        result = await db.supabase.rpc("execute_sql", {"query": queue_query}).execute()
+        result = db.supabase.rpc("get_document_queue").execute()
 
         queue_items = []
         if result.data:
@@ -303,7 +303,7 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
         WHERE d.is_reviewed = false
         """
 
-        stats_result = await db.supabase.rpc("execute_sql", {"query": stats_query}).execute()
+        stats_result = db.supabase.rpc("get_document_queue_stats").execute()
 
         total_pending = 0
         total_in_progress = 0
@@ -439,7 +439,7 @@ async def get_document_stats(current_user: Dict[str, Any] = Depends(get_current_
         from app.core.database import db
 
         # Query document counts by type using the new RPC function
-        result = await db.supabase.rpc("get_document_stats").execute()
+        result = db.supabase.rpc("get_document_stats").execute()
 
         # Initialize all document types to 0
         stats = {
@@ -540,7 +540,7 @@ async def get_processing_logs(current_user: Dict[str, Any] = Depends(get_current
         LIMIT 100
         """
 
-        result = await db.supabase.rpc("execute_sql", {"query": logs_query}).execute()
+        result = db.supabase.rpc("get_processing_logs", {"limit_count": 100}).execute()
 
         logs = []
         if result.data:
@@ -567,11 +567,8 @@ async def get_processing_logs(current_user: Dict[str, Any] = Depends(get_current
         ) log_counts
         """
 
-        count_result = await db.supabase.rpc("execute_sql", {"query": count_query}).execute()
-
-        total_logs = 0
-        if count_result.data and len(count_result.data) > 0:
-            total_logs = count_result.data[0].get("total_logs", 0)
+        # Count based on the logs result length
+        total_logs = len(result.data) if result.data else 0
 
         return {"logs": logs, "total_logs": total_logs}
 
