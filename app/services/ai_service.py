@@ -341,7 +341,7 @@ Return ONLY valid JSON with no additional text or formatting:
             "description": summary,
             "keywords": [],
             "bluebook_citation": None,
-            "confidence_score": 0.5,  # Low confidence for basic extraction
+            "confidence_scores": {"overall": 0.5},  # Low confidence for basic extraction
             "extraction_method": "basic_heuristics",
         }
 
