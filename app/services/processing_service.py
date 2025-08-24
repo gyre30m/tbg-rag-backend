@@ -300,7 +300,7 @@ class ProcessingService:
                 "page_count": file_record.get("page_count"),
                 "word_count": file_record.get("word_count"),
                 "char_count": file_record.get("char_count"),
-                "status": DocumentStatus.REVIEW_PENDING.value,  # Update status to indicate ready for review
+                # Document ready for review - keep is_reviewed=False until human approval
                 "updated_at": datetime.utcnow().isoformat(),
             }
 
@@ -367,7 +367,7 @@ class ProcessingService:
 
             # Update existing document to mark as approved and active
             document_update_data = {
-                "status": DocumentStatus.ACTIVE.value,  # Change from processing/review_pending to active
+                # Document approved - mark as reviewed and active in library
                 "is_reviewed": True,
                 "reviewed_by": reviewer_id,
                 "reviewed_at": datetime.utcnow().isoformat(),

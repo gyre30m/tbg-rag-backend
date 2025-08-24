@@ -218,7 +218,8 @@ async def list_library_documents(
                 "id, title, authors, publication_date, doc_type, doc_category, "
                 "description, keywords, page_count, word_count, created_at, reviewed_by"
             )
-            .eq("status", DocumentStatus.ACTIVE.value)
+            .eq("is_reviewed", True)
+            .eq("is_deleted", False)
         )
 
         # Apply filters
@@ -257,8 +258,18 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
 
         client = await db.get_supabase_client()
 
-        # Get all unreviewed documents (avoid relationship issues)
-        documents_result = await (
+        # Get all processing files that are not in terminal states
+        # This shows files from upload through processing pipeline
+        processing_files_result = await (
+            client.table("processing_files")
+            .select("*")
+            .not_.in_("status", ["approved", "rejected", "cancelled", "duplicate"])
+            .order("created_at", desc=True)
+            .execute()
+        )
+
+        # Get documents ready for review (processing complete, not yet reviewed)
+        documents_ready_for_review = await (
             client.table("documents")
             .select("*")
             .eq("is_reviewed", False)
@@ -272,60 +283,101 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
         total_pending = 0
         total_in_progress = 0
 
-        if documents_result.data:
-            for doc in documents_result.data:
-                # Get processing file info separately to avoid relationship issues
-                processing_files_result = await (
-                    client.table("processing_files")
-                    .select("id, batch_id, status, created_at, file_size")
-                    .eq("document_id", doc["id"])
-                    .limit(1)
-                    .execute()
+        # First, add all processing files (files in pipeline)
+        for processing_file in processing_files_result.data or []:
+            # Skip if this file has a document that's ready for review
+            # (it will be shown in document section instead)
+            if processing_file["document_id"]:
+                # Check if the associated document is ready for review
+                doc_ready = any(
+                    doc["id"] == processing_file["document_id"]
+                    for doc in (documents_ready_for_review.data or [])
+                    if processing_file.get("status") == "review_pending"
                 )
+                if doc_ready:
+                    continue  # Skip this processing file, show as document instead
 
-                processing_file = (
-                    processing_files_result.data[0] if processing_files_result.data else None
-                )
-                processing_status = processing_file["status"] if processing_file else "unknown"
+            # Create queue item for processing file
+            processing_status = processing_file["status"]
 
-                # Map processing status for display
-                # Check document status first, then fallback to processing file status
-                doc_status = doc.get("status")
-                if doc_status == "processing":
-                    display_status = "processing"
-                    total_processing += 1
-                elif doc_status == "review_pending" or processing_status == "review_pending":
-                    display_status = "review_pending"
-                    total_pending += 1
-                elif processing_status == "under_review":
-                    display_status = "under_review"
-                    total_in_progress += 1
-                elif processing_status in [
-                    "uploaded",
-                    "queued",
-                    "extracting_text",
-                    "analyzing_metadata",
-                    "generating_embeddings",
-                ]:
-                    display_status = "processing"
-                    total_processing += 1
-                else:
-                    display_status = processing_status
+            # Map processing status for display
+            if processing_status in [
+                "uploaded",
+                "queued",
+                "extracting_text",
+                "analyzing_metadata",
+                "generating_embeddings",
+                "processing_complete",
+            ]:
+                display_status = "processing"
+                total_processing += 1
+            elif processing_status == "under_review":
+                display_status = "under_review"
+                total_in_progress += 1
+            else:
+                display_status = processing_status
+                total_processing += 1
+
+            queue_item = {
+                "id": processing_file["id"],  # Use processing file ID while in pipeline
+                "type": "processing_file",  # Distinguish from documents
+                "title": processing_file["original_filename"],  # Show filename as title
+                "original_filename": processing_file["original_filename"],
+                "doc_type": None,  # Not available until processed
+                "doc_category": None,  # Not available until processed
+                "confidence_score": None,  # Not available until processed
+                "processing_status": display_status,
+                "raw_processing_status": processing_status,
+                "uploaded_at": processing_file["created_at"],
+                "file_size": processing_file["file_size"],
+                "batch_id": processing_file["batch_id"],
+                # No metadata available yet
+                "summary": None,
+                "case_name": None,
+                "case_number": None,
+                "court": None,
+                "jurisdiction": None,
+                "practice_area": None,
+                "date": None,
+                "authors": None,
+            }
+            queue_items.append(queue_item)
+
+        # Second, add documents ready for review (replace processing file entries)
+        for doc in documents_ready_for_review.data or []:
+            # Get the associated processing file for additional info
+            processing_files_for_doc = await (
+                client.table("processing_files")
+                .select("id, batch_id, status, created_at, file_size")
+                .eq("document_id", doc["id"])
+                .limit(1)
+                .execute()
+            )
+
+            processing_file = (
+                processing_files_for_doc.data[0] if processing_files_for_doc.data else None
+            )
+
+            # Only show if processing is complete and ready for review
+            if processing_file and processing_file["status"] == "review_pending":
+                display_status = "review_pending"
+                total_pending += 1
 
                 queue_item = {
-                    "id": doc.get("id"),
-                    "title": doc.get("title"),
-                    "original_filename": doc.get("original_filename"),
-                    "doc_type": doc.get("doc_type"),
-                    "doc_category": doc.get("doc_category"),
-                    "confidence_score": doc.get("confidence_score"),
+                    "id": doc["id"],  # Use document ID when ready for review
+                    "type": "document",  # Distinguish from processing files
+                    "title": doc["title"],
+                    "original_filename": doc["original_filename"],
+                    "doc_type": doc["doc_type"],
+                    "doc_category": doc["doc_category"],
+                    "confidence_score": doc["confidence_score"],
                     "processing_status": display_status,
-                    "raw_processing_status": processing_status,  # For debugging
-                    "uploaded_at": doc.get("created_at"),
-                    "file_size": doc.get("file_size"),
-                    "batch_id": processing_file["batch_id"] if processing_file else None,
-                    # Include additional metadata for editor
-                    "summary": doc.get("description"),
+                    "raw_processing_status": processing_file["status"],
+                    "uploaded_at": doc["created_at"],
+                    "file_size": doc["file_size"],
+                    "batch_id": processing_file["batch_id"],
+                    # Full metadata available for review
+                    "summary": doc.get("summary"),
                     "case_name": doc.get("case_name"),
                     "case_number": doc.get("case_number"),
                     "court": doc.get("court"),
@@ -575,7 +627,7 @@ async def delete_document(
             client.table("documents")
             .update(
                 {
-                    "status": DocumentStatus.DELETED.value,
+                    "is_deleted": True,
                     "deleted_by": user_id,
                     "deleted_at": datetime.utcnow().isoformat(),
                 }

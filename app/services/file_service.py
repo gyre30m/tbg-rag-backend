@@ -187,7 +187,6 @@ class FileService:
                 "file_size": len(content),
                 "mime_type": file.content_type,
                 "storage_path": storage_path,
-                "status": DocumentStatus.PROCESSING.value,  # Status indicating it's being processed
                 "is_reviewed": False,  # Not yet reviewed
                 "is_deleted": False,
                 "is_archived": False,
