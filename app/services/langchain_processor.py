@@ -181,10 +181,11 @@ class LangChainDocumentProcessor:
                         {
                             "processing_file_id": file_id,  # Use correct field name
                             "chunk_index": i,
-                            "content": chunk_content,
+                            "content": chunk_content,  # Standardize on content field
                             "content_hash": calculate_content_hash(chunk_content.encode("utf-8")),
                             "embedding": embedding,
-                            # Note: document_id will be set later when processing completes
+                            "token_count": len(chunk_content.split()),  # Rough token count
+                            # document_id is nullable and will be set later when processing completes
                         }
                     )
 

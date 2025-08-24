@@ -175,7 +175,7 @@ class DocumentSearchRequest(BaseModel):
 class DocumentSearchResult(BaseModel):
     """Model for individual similarity search result."""
 
-    text_content: str
+    content: str
     chunk_index: int
     filename: str
     title: Optional[str]

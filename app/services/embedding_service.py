@@ -322,7 +322,7 @@ class EmbeddingService:
                         {
                             "processing_file_id": file_id,
                             "chunk_index": i,
-                            "text_content": chunks[i],
+                            "content": chunks[i],
                             "embedding": embeddings[i],
                             "token_count": len(chunks[i].split()),
                             "created_at": datetime.utcnow().isoformat(),
@@ -449,7 +449,7 @@ class EmbeddingService:
                         {
                             "processing_file_id": file_id,
                             "chunk_index": stream_start + i,
-                            "text_content": chunk_text,
+                            "content": chunk_text,
                             "embedding": embedding,
                             "token_count": len(chunk_text.split()),
                             "created_at": datetime.utcnow().isoformat(),
@@ -549,7 +549,7 @@ class EmbeddingService:
             # Note: This uses pgvector's cosine similarity operator (<->)
             sql_query = f"""
             SELECT
-                dc.text_content,
+                dc.content,
                 dc.chunk_index,
                 pf.original_filename,
                 pf.ai_title,
@@ -581,7 +581,7 @@ class EmbeddingService:
                 if row.get("similarity_score", 0) >= similarity_threshold:
                     similar_chunks.append(
                         {
-                            "text_content": row["text_content"],
+                            "content": row["content"],
                             "chunk_index": row["chunk_index"],
                             "filename": row["original_filename"],
                             "title": row["ai_title"],

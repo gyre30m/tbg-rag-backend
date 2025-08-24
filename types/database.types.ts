@@ -72,7 +72,7 @@ export type Database = {
           embedding: string | null
           id: string
           processing_file_id: string | null
-          text_content: string | null
+          content: string | null
           token_count: number | null
         }
         Insert: {
@@ -84,7 +84,7 @@ export type Database = {
           embedding?: string | null
           id?: string
           processing_file_id?: string | null
-          text_content?: string | null
+          content?: string | null
           token_count?: number | null
         }
         Update: {
@@ -96,7 +96,7 @@ export type Database = {
           embedding?: string | null
           id?: string
           processing_file_id?: string | null
-          text_content?: string | null
+          content?: string | null
           token_count?: number | null
         }
         Relationships: [
