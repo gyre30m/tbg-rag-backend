@@ -22,15 +22,21 @@ class EmbeddingService:
     """Handles vector embedding generation for document text."""
 
     def __init__(self):
-        self.openai_client = (
-            openai.AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
-        )
+        self.openai_client = None
         self.embedding_model = "text-embedding-3-small"  # OpenAI's latest embedding model
         self.chunk_size = 1000  # Characters per chunk
         self.chunk_overlap = 200  # Overlap between chunks
         self.max_chunks_per_document = 500  # Reasonable limit
 
-        if not self.openai_client:
+        # Initialize OpenAI client if API key is available
+        if settings.openai_api_key and settings.openai_api_key.strip():
+            try:
+                self.openai_client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+                logger.info("OpenAI embedding service initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize OpenAI client: {e}")
+                self.openai_client = None
+        else:
             logger.warning("OpenAI API key not configured - embedding generation disabled")
 
     async def generate_embeddings(self, file_id: str) -> Dict[str, Any]:
@@ -47,7 +53,18 @@ class EmbeddingService:
         logger.info(f"🔗 EMBEDDING START: File {file_id}")
 
         if not self.openai_client:
-            return {"success": False, "file_id": file_id, "error": "OpenAI API key not configured"}
+            logger.warning(
+                f"Skipping embeddings for file {file_id} - OpenAI API key not configured"
+            )
+            # Update file status to move forward in pipeline without embeddings
+            await self._update_file_status(file_id, FileStatus.REVIEW_PENDING)
+            return {
+                "success": True,
+                "file_id": file_id,
+                "chunk_count": 0,
+                "embedding_dimension": 0,
+                "message": "Embeddings skipped - no OpenAI API key",
+            }
 
         try:
             # Get file record with extracted text

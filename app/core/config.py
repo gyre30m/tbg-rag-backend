@@ -30,8 +30,8 @@ class Settings(BaseSettings):
     database_url: Optional[str] = None
 
     # AI Services
-    openai_api_key: str
-    anthropic_api_key: str
+    openai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
 
     # Webhook Configuration
     webhook_secret: Optional[str] = None

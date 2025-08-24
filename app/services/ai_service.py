@@ -21,12 +21,26 @@ class AIService:
     """Handles AI-powered metadata extraction and document analysis."""
 
     def __init__(self):
-        self.openai_client = (
-            openai.AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
-        )
-        self.anthropic_client = (
-            Anthropic(api_key=settings.anthropic_api_key) if settings.anthropic_api_key else None
-        )
+        self.openai_client = None
+        self.anthropic_client = None
+
+        # Initialize OpenAI client if API key is available
+        if settings.openai_api_key and settings.openai_api_key.strip():
+            try:
+                self.openai_client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+                logger.info("OpenAI AI service initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize OpenAI client: {e}")
+                self.openai_client = None
+
+        # Initialize Anthropic client if API key is available
+        if settings.anthropic_api_key and settings.anthropic_api_key.strip():
+            try:
+                self.anthropic_client = Anthropic(api_key=settings.anthropic_api_key)
+                logger.info("Anthropic AI service initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize Anthropic client: {e}")
+                self.anthropic_client = None
 
         if not self.openai_client and not self.anthropic_client:
             logger.warning("No AI API keys configured - metadata extraction will be limited")
@@ -99,13 +113,14 @@ class AIService:
 
             prompt = self._create_metadata_extraction_prompt(text, filename)
 
-            # Try Anthropic first if available, fallback to OpenAI
+            # Try Anthropic first if available, fallback to OpenAI, then to basic extraction
             if self.anthropic_client:
                 result = await self._extract_with_anthropic(prompt)
             elif self.openai_client:
                 result = await self._extract_with_openai(prompt)
             else:
-                return {"success": False, "error": "No AI API keys configured"}
+                logger.warning("No AI services available, using basic metadata extraction")
+                result = self._extract_basic_metadata(text, filename)
 
             return result
 
@@ -289,6 +304,49 @@ Return ONLY valid JSON with no additional text or formatting:
         except Exception as e:
             logger.error(f"Failed to save metadata for file {file_id}: {e}")
             raise
+
+    def _extract_basic_metadata(self, text: str, filename: str) -> Dict[str, Any]:
+        """Extract basic metadata without AI services."""
+        import os
+
+        # Generate basic metadata from filename and text analysis
+        title = filename
+        if title.endswith((".pdf", ".docx", ".txt", ".md")):
+            title = os.path.splitext(title)[0]
+        title = title.replace("_", " ").replace("-", " ").title()
+
+        # Simple heuristics for doc type based on filename
+        doc_type = "other"
+        filename_lower = filename.lower()
+        if any(word in filename_lower for word in ["statute", "law", "code", "regulation"]):
+            doc_type = "statute"
+        elif any(word in filename_lower for word in ["case", "court", "decision", "ruling"]):
+            doc_type = "case_law"
+        elif any(word in filename_lower for word in ["article", "paper", "journal"]):
+            doc_type = "article"
+        elif any(word in filename_lower for word in ["book", "textbook", "manual"]):
+            doc_type = "book"
+
+        # Basic summary from first 500 characters
+        summary = text[:500].strip()
+        if len(text) > 500:
+            summary += "..."
+
+        metadata = {
+            "title": title,
+            "authors": [],
+            "publication_date": None,
+            "doc_type": doc_type,
+            "doc_category": "Other",
+            "description": summary,
+            "keywords": [],
+            "bluebook_citation": None,
+            "confidence_score": 0.5,  # Low confidence for basic extraction
+            "extraction_method": "basic_heuristics",
+        }
+
+        logger.info(f"Generated basic metadata: {title} ({doc_type})")
+        return {"success": True, "metadata": metadata}
 
     async def _update_file_status(self, file_id: str, status: FileStatus, **kwargs):
         """Update file processing status."""
