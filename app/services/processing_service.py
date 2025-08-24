@@ -162,7 +162,12 @@ class ProcessingService:
                 raise ValueError(f"File path not found for file {file_id}")
 
             # Use LangChain processor for extraction, chunking, and embeddings
-            langchain_result = await langchain_processor.process_pdf_file(file_id, file_path)
+            try:
+                langchain_result = await langchain_processor.process_pdf_file(file_id, file_path)
+            except Exception as e:
+                logger.error(f"LangChain processing failed for file {file_id}: {e}")
+                # Fallback to avoid breaking deployment
+                langchain_result = {"success": False, "error": f"Processing failed: {str(e)}"}
 
             if not langchain_result["success"]:
                 return langchain_result

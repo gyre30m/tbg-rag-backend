@@ -25,17 +25,21 @@ class LangChainDocumentProcessor:
 
     def __init__(self):
         self.embeddings = None
-        if settings.openai_api_key and settings.openai_api_key.strip():
-            try:
-                self.embeddings = OpenAIEmbeddings(
-                    openai_api_key=settings.openai_api_key, model=settings.embedding_model
-                )
-                logger.info("LangChain OpenAI embeddings initialized successfully")
-            except Exception as e:
-                logger.error(f"Failed to initialize OpenAI embeddings: {e}")
-                self.embeddings = None
-        else:
-            logger.warning("OpenAI API key not configured - embedding generation disabled")
+        try:
+            if settings.openai_api_key and settings.openai_api_key.strip():
+                try:
+                    self.embeddings = OpenAIEmbeddings(
+                        openai_api_key=settings.openai_api_key, model=settings.embedding_model
+                    )
+                    logger.info("LangChain OpenAI embeddings initialized successfully")
+                except Exception as e:
+                    logger.error(f"Failed to initialize OpenAI embeddings: {e}")
+                    self.embeddings = None
+            else:
+                logger.warning("OpenAI API key not configured - embedding generation disabled")
+        except Exception as e:
+            logger.error(f"Critical error initializing LangChain processor: {e}")
+            self.embeddings = None
 
         # Initialize text splitter with safe, proven settings
         self.text_splitter = RecursiveCharacterTextSplitter(
