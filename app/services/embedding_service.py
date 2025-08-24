@@ -172,8 +172,12 @@ class EmbeddingService:
                 batch_chunks = chunks[i : i + batch_size]
 
                 try:
-                    response = await self.openai_client.embeddings.create(
-                        model=self.embedding_model, input=batch_chunks, encoding_format="float"
+                    # Add timeout to prevent hanging
+                    response = await asyncio.wait_for(
+                        self.openai_client.embeddings.create(
+                            model=self.embedding_model, input=batch_chunks, encoding_format="float"
+                        ),
+                        timeout=60.0,  # 60 second timeout per batch
                     )
 
                     batch_embeddings = [data.embedding for data in response.data]
@@ -183,6 +187,11 @@ class EmbeddingService:
                     if i + batch_size < len(chunks):
                         await asyncio.sleep(0.1)
 
+                except asyncio.TimeoutError:
+                    logger.error(
+                        f"Embedding batch {i // batch_size + 1} timed out after 60 seconds"
+                    )
+                    return {"success": False, "error": "OpenAI embedding API timed out"}
                 except Exception as e:
                     logger.error(f"Embedding batch {i // batch_size + 1} failed: {e}")
                     return {"success": False, "error": f"OpenAI embedding API failed: {str(e)}"}

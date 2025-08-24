@@ -204,6 +204,17 @@ class ProcessingService:
                 file_id, FileStatus.REVIEW_PENDING, document_id=document_id
             )
 
+            # Check if batch is complete after this file finishes
+            client = await db.get_supabase_client()
+            file_result = (
+                await client.table("processing_files")
+                .select("batch_id")
+                .eq("id", file_id)
+                .execute()
+            )
+            if file_result.data:
+                await self._check_batch_completion(file_result.data[0]["batch_id"])
+
             total_duration = time.time() - start_time
             logger.info(
                 f"🎯 PIPELINE COMPLETE: File {file_id} processed successfully in {total_duration:.2f}s"
@@ -227,6 +238,21 @@ class ProcessingService:
             await self._update_file_status(
                 file_id, FileStatus.EXTRACTION_FAILED, error_message=str(e)
             )
+
+            # Check if batch is complete after this file fails
+            try:
+                client = await db.get_supabase_client()
+                file_result = (
+                    await client.table("processing_files")
+                    .select("batch_id")
+                    .eq("id", file_id)
+                    .execute()
+                )
+                if file_result.data:
+                    await self._check_batch_completion(file_result.data[0]["batch_id"])
+            except Exception as batch_check_error:
+                logger.error(f"Failed to check batch completion: {batch_check_error}")
+
             return {"success": False, "file_id": file_id, "error": str(e)}
 
     async def _create_document_for_review(self, file_id: str, ai_metadata: Dict[str, Any]) -> str:
@@ -506,3 +532,70 @@ class ProcessingService:
         except Exception as e:
             logger.error(f"Failed to update batch {batch_id} status: {e}")
             raise
+
+    async def _check_batch_completion(self, batch_id: str):
+        """Check if all files in a batch are complete and update batch status."""
+        try:
+            client = await db.get_supabase_client()
+
+            # Get all files for this batch
+            files_result = (
+                await client.table("processing_files")
+                .select("status")
+                .eq("batch_id", batch_id)
+                .execute()
+            )
+
+            if not files_result.data:
+                logger.warning(f"No files found for batch {batch_id}")
+                return
+
+            # Count files by status
+            status_counts: Dict[str, int] = {}
+            for file_data in files_result.data:
+                status = file_data["status"]
+                status_counts[status] = status_counts.get(status, 0) + 1
+
+            total_files = len(files_result.data)
+            completed_files = status_counts.get("review_pending", 0) + status_counts.get(
+                "approved", 0
+            )
+            failed_files = (
+                status_counts.get("extraction_failed", 0)
+                + status_counts.get("analysis_failed", 0)
+                + status_counts.get("embedding_failed", 0)
+            )
+
+            # Check if all files are in final states
+            processing_files = total_files - completed_files - failed_files
+
+            logger.info(
+                f"Batch {batch_id}: {total_files} total, {completed_files} completed, {failed_files} failed, {processing_files} still processing"
+            )
+
+            if processing_files == 0:  # All files are in final states
+                from app.models.enums import BatchStatus
+
+                if failed_files == 0:
+                    final_status = BatchStatus.PROCESSING_COMPLETE
+                elif completed_files > 0:
+                    final_status = BatchStatus.PARTIALLY_COMPLETED
+                else:
+                    final_status = BatchStatus.FAILED
+
+                # Update batch status
+                await client.table("processing_jobs").update(
+                    {
+                        "status": final_status.value,
+                        "completed_files": completed_files,
+                        "failed_files": failed_files,
+                        "updated_at": datetime.utcnow().isoformat(),
+                    }
+                ).eq("id", batch_id).execute()
+
+                logger.info(
+                    f"✅ BATCH COMPLETE: Updated batch {batch_id} status to {final_status.value}"
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to check batch completion for {batch_id}: {e}")
