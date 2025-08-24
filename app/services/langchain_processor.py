@@ -163,15 +163,29 @@ class LangChainDocumentProcessor:
                 )
                 await self._update_file_status(file_id, FileStatus.GENERATING_EMBEDDINGS)
 
-                # Create Supabase vector store and add documents
+                # Generate embeddings and store in database
+                # We need to manually handle this since LangChain's SupabaseVectorStore doesn't support async
                 client = await db.get_supabase_client()
-                vector_store = SupabaseVectorStore.from_documents(
-                    chunks,
-                    self.embeddings,
-                    client=client,
-                    table_name="document_chunks",
-                    query_name="match_documents",
-                )
+
+                # Generate embeddings for all chunks
+                chunk_texts = [chunk.page_content for chunk in chunks]
+                embeddings_list = self.embeddings.embed_documents(chunk_texts)
+
+                # Prepare chunk data for insertion
+                chunks_data = []
+                for i, (chunk, embedding) in enumerate(zip(chunks, embeddings_list)):
+                    chunks_data.append(
+                        {
+                            "file_id": file_id,
+                            "chunk_index": i,
+                            "content": chunk.page_content,
+                            "embedding": embedding,
+                            "metadata": chunk.metadata,
+                        }
+                    )
+
+                # Insert chunks into database
+                await client.table("document_chunks").insert(chunks_data).execute()
 
                 # Update chunk count in processing file
                 await client.table("processing_files").update({"chunk_count": len(chunks)}).eq(
