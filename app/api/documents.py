@@ -248,96 +248,100 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
     """
     Get documents pending review with full metadata.
 
-    Returns documents that need human review - those with is_reviewed = false
-    and processing status of 'review_pending' or 'review_in_progress'.
-    Includes AI-extracted metadata, confidence scores, and document preview.
+    Returns ALL documents that need human review - those with is_reviewed = false,
+    including documents that are still being processed. Documents appear in the queue
+    immediately after upload and show their current processing status.
     """
     try:
         from app.core.database import db
 
-        # Query for documents pending review
-        # Join documents with processing_files to get processing metadata
-        queue_query = """
-        SELECT
-            d.id,
-            d.title,
-            d.doc_type,
-            d.doc_category,
-            d.confidence_score,
-            d.summary,
-            d.case_name,
-            d.case_number,
-            d.court,
-            d.jurisdiction,
-            d.practice_area,
-            d.date,
-            d.authors,
-            pf.original_filename,
-            pf.file_size,
-            pf.status as processing_status,
-            pf.created_at as uploaded_at,
-            pf.batch_id,
-            LEFT(pf.extracted_text, 500) as preview_text
-        FROM documents d
-        JOIN processing_files pf ON d.id = pf.document_id
-        WHERE d.is_reviewed = false
-        AND pf.status IN ('review_pending', 'under_review')
-        ORDER BY pf.created_at ASC
-        """
-
         client = await db.get_supabase_client()
-        result = await client.rpc("get_document_queue").execute()
+
+        # Get all unreviewed documents (avoid relationship issues)
+        documents_result = await (
+            client.table("documents")
+            .select("*")
+            .eq("is_reviewed", False)
+            .eq("is_deleted", False)
+            .order("created_at", desc=True)
+            .execute()
+        )
 
         queue_items = []
-        if result.data:
-            for row in result.data:
+        total_processing = 0
+        total_pending = 0
+        total_in_progress = 0
+
+        if documents_result.data:
+            for doc in documents_result.data:
+                # Get processing file info separately to avoid relationship issues
+                processing_files_result = await (
+                    client.table("processing_files")
+                    .select("id, batch_id, status, created_at, file_size")
+                    .eq("document_id", doc["id"])
+                    .limit(1)
+                    .execute()
+                )
+
+                processing_file = (
+                    processing_files_result.data[0] if processing_files_result.data else None
+                )
+                processing_status = processing_file["status"] if processing_file else "unknown"
+
+                # Map processing status for display
+                # Check document status first, then fallback to processing file status
+                doc_status = doc.get("status")
+                if doc_status == "processing":
+                    display_status = "processing"
+                    total_processing += 1
+                elif doc_status == "review_pending" or processing_status == "review_pending":
+                    display_status = "review_pending"
+                    total_pending += 1
+                elif processing_status == "under_review":
+                    display_status = "under_review"
+                    total_in_progress += 1
+                elif processing_status in [
+                    "uploaded",
+                    "queued",
+                    "extracting_text",
+                    "analyzing_metadata",
+                    "generating_embeddings",
+                ]:
+                    display_status = "processing"
+                    total_processing += 1
+                else:
+                    display_status = processing_status
+
                 queue_item = {
-                    "id": row.get("id"),
-                    "title": row.get("title"),
-                    "original_filename": row.get("original_filename"),
-                    "doc_type": row.get("doc_type"),
-                    "doc_category": row.get("doc_category"),
-                    "confidence_score": row.get("confidence_score"),
-                    "preview_text": row.get("preview_text"),
-                    "processing_status": row.get("processing_status"),
-                    "uploaded_at": row.get("uploaded_at"),
-                    "file_size": row.get("file_size"),
-                    "batch_id": row.get("batch_id"),
+                    "id": doc.get("id"),
+                    "title": doc.get("title"),
+                    "original_filename": doc.get("original_filename"),
+                    "doc_type": doc.get("doc_type"),
+                    "doc_category": doc.get("doc_category"),
+                    "confidence_score": doc.get("confidence_score"),
+                    "processing_status": display_status,
+                    "raw_processing_status": processing_status,  # For debugging
+                    "uploaded_at": doc.get("created_at"),
+                    "file_size": doc.get("file_size"),
+                    "batch_id": processing_file["batch_id"] if processing_file else None,
                     # Include additional metadata for editor
-                    "summary": row.get("summary"),
-                    "case_name": row.get("case_name"),
-                    "case_number": row.get("case_number"),
-                    "court": row.get("court"),
-                    "jurisdiction": row.get("jurisdiction"),
-                    "practice_area": row.get("practice_area"),
-                    "date": row.get("date"),
-                    "authors": row.get("authors"),
+                    "summary": doc.get("description"),
+                    "case_name": doc.get("case_name"),
+                    "case_number": doc.get("case_number"),
+                    "court": doc.get("court"),
+                    "jurisdiction": doc.get("jurisdiction"),
+                    "practice_area": doc.get("practice_area"),
+                    "date": doc.get("date"),
+                    "authors": doc.get("authors"),
                 }
                 queue_items.append(queue_item)
 
-        # Count additional stats for queue management
-        stats_query = """
-        SELECT
-            COUNT(*) FILTER (WHERE pf.status = 'review_pending') as total_pending,
-            COUNT(*) FILTER (WHERE pf.status = 'under_review') as total_in_progress
-        FROM documents d
-        JOIN processing_files pf ON d.id = pf.document_id
-        WHERE d.is_reviewed = false
-        """
-
-        stats_result = await client.rpc("get_document_queue_stats").execute()
-
-        total_pending = 0
-        total_in_progress = 0
-        if stats_result.data and len(stats_result.data) > 0:
-            stats_row = stats_result.data[0]
-            total_pending = stats_row.get("total_pending", 0)
-            total_in_progress = stats_row.get("total_in_progress", 0)
-
         return {
             "queue": queue_items,
+            "total_processing": total_processing,
             "total_pending": total_pending,
             "total_in_progress": total_in_progress,
+            "total_documents": len(queue_items),
         }
 
     except Exception as e:

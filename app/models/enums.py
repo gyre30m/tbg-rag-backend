@@ -76,7 +76,9 @@ class DocumentCategory(str, Enum):
 class DocumentStatus(str, Enum):
     """Document library status enum."""
 
-    ACTIVE = "active"
+    PROCESSING = "processing"  # Document is being processed
+    REVIEW_PENDING = "review_pending"  # Ready for human review
+    ACTIVE = "active"  # Approved and in library
     DELETED = "deleted"
     ARCHIVED = "archived"
 

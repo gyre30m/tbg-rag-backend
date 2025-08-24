@@ -13,7 +13,7 @@ from fastapi import UploadFile
 
 from app.core.config import settings
 from app.core.database import db
-from app.models.enums import BatchStatus, FileStatus
+from app.models.enums import BatchStatus, DocumentStatus, FileStatus
 from app.models.processing import UploadResponse
 from app.services.processing_service import ProcessingService
 from app.utils.file_utils import FileValidator, calculate_content_hash, generate_safe_filename
@@ -176,9 +176,32 @@ class FileService:
                 logger.error(f"Storage upload failed: {upload_result.error}")
                 return {"success": False, "error": "Storage upload failed"}
 
-            # Create processing file record
+            # Create document record immediately with basic information
+            document_data = {
+                "title": file.filename,  # Use filename as initial title
+                "filename": safe_filename,
+                "original_filename": file.filename,
+                "doc_type": "other",  # Default type, will be updated by AI
+                "doc_category": "Other",  # Default category, will be updated by AI
+                "content_hash": content_hash,
+                "file_size": len(content),
+                "mime_type": file.content_type,
+                "storage_path": storage_path,
+                "status": DocumentStatus.PROCESSING.value,  # Status indicating it's being processed
+                "is_reviewed": False,  # Not yet reviewed
+                "is_deleted": False,
+                "is_archived": False,
+                "uploaded_by": user_id,
+                "created_at": datetime.utcnow().isoformat(),
+            }
+
+            document_result = await client.table("documents").insert(document_data).execute()
+            document_id = document_result.data[0]["id"]
+
+            # Create processing file record linked to the document
             file_data = {
                 "batch_id": job_id,
+                "document_id": document_id,  # Link to the document immediately
                 "original_filename": file.filename,
                 "stored_path": storage_path,
                 "file_size": len(content),
@@ -192,9 +215,16 @@ class FileService:
             file_result = await client.table("processing_files").insert(file_data).execute()
             file_record_id = file_result.data[0]["id"]
 
-            logger.info(f"Successfully uploaded file {file.filename} with ID {file_record_id}")
+            logger.info(
+                f"Successfully uploaded file {file.filename} with processing ID {file_record_id} and document ID {document_id}"
+            )
 
-            return {"success": True, "file_id": file_record_id, "storage_path": storage_path}
+            return {
+                "success": True,
+                "file_id": file_record_id,
+                "document_id": document_id,
+                "storage_path": storage_path,
+            }
 
         except Exception as e:
             logger.error(f"Error processing file {file.filename}: {e}")

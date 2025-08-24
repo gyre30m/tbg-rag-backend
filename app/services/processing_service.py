@@ -12,8 +12,7 @@ from app.core.database import db
 from app.core.logging_utils import processing_logger
 from app.models.enums import BatchStatus, DocumentStatus, FileStatus
 from app.services.ai_service import AIService
-from app.services.embedding_service import EmbeddingService
-from app.services.extraction_service import ExtractionService
+from app.services.langchain_processor import langchain_processor
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +21,8 @@ class ProcessingService:
     """Orchestrates the document processing pipeline."""
 
     def __init__(self):
-        self.extraction_service = ExtractionService()
         self.ai_service = AIService()
-        self.embedding_service = EmbeddingService()
+        # LangChain handles extraction, chunking, and embeddings
         self.max_concurrent_files = 5  # Limit concurrent processing
 
     async def queue_text_extraction(self, file_id: str) -> bool:
@@ -145,31 +143,31 @@ class ProcessingService:
             Dict with processing results
         """
         start_time = time.time()
-        processing_logger.log_step("pipeline_start", file_id=file_id)
+        processing_logger.log_step("langchain_pipeline_start", file_id=file_id)
 
         try:
-            # Step 1: Text Extraction
-            step_start = time.time()
-            processing_logger.log_step("text_extraction_start", file_id=file_id)
-            extraction_result = await self.extraction_service.extract_text_from_file(file_id)
-            step_duration = time.time() - step_start
-
-            if not extraction_result["success"]:
-                processing_logger.log_error(
-                    "text_extraction_failed",
-                    Exception(extraction_result.get("error", "Unknown error")),
-                    file_id=file_id,
-                    duration_seconds=step_duration,
-                )
-                return dict(extraction_result)
-            processing_logger.log_step(
-                "text_extraction_complete",
-                file_id=file_id,
-                duration_seconds=step_duration,
-                text_length=len(extraction_result.get("text", "")),
+            # Get file path for LangChain processing
+            client = await db.get_supabase_client()
+            file_result = (
+                await client.table("processing_files").select("*").eq("id", file_id).execute()
             )
 
-            # Step 2: AI Metadata Extraction
+            if not file_result.data:
+                raise ValueError(f"File {file_id} not found")
+
+            file_record = file_result.data[0]
+            file_path = file_record.get("file_path")
+
+            if not file_path:
+                raise ValueError(f"File path not found for file {file_id}")
+
+            # Use LangChain processor for extraction, chunking, and embeddings
+            langchain_result = await langchain_processor.process_pdf_file(file_id, file_path)
+
+            if not langchain_result["success"]:
+                return langchain_result
+
+            # Step 2: AI Metadata Extraction (still using our custom AI service)
             step_start = time.time()
             processing_logger.log_step("ai_metadata_start", file_id=file_id)
             metadata_result = await self.ai_service.extract_metadata(file_id)
@@ -187,30 +185,10 @@ class ProcessingService:
                 "ai_metadata_complete", file_id=file_id, duration_seconds=step_duration
             )
 
-            # Step 3: Embedding Generation
-            step_start = time.time()
-            processing_logger.log_step("embedding_generation_start", file_id=file_id)
-            processing_logger.log_memory_warning(
-                "pre_embedding_generation", threshold_mb=500, file_id=file_id
-            )
-            embedding_result = await self.embedding_service.generate_embeddings(file_id)
-            step_duration = time.time() - step_start
-            processing_logger.log_memory_warning(
-                "post_embedding_generation", threshold_mb=500, file_id=file_id
-            )
-
-            if not embedding_result["success"]:
-                logger.error(
-                    f"❌ STEP 3 FAILED: Embedding generation for file {file_id}: {embedding_result['error']} ({step_duration:.2f}s)"
-                )
-                return dict(embedding_result)
-            logger.info(
-                f"✅ STEP 3 SUCCESS: Embedding generation completed for file {file_id} in {step_duration:.2f}s"
-            )
-
-            # Step 4: Create document record for review
-            logger.info(f"📄 STEP 4: Creating document record for file {file_id}")
-            document_id = await self._create_document_for_review(
+            # Step 3: Update document record with AI metadata
+            # (LangChain already handled extraction, chunking, and embeddings)
+            logger.info(f"📄 STEP 3: Updating document record with AI metadata for file {file_id}")
+            document_id = await self._update_document_with_metadata(
                 file_id, metadata_result.get("metadata", {})
             )
 
@@ -239,9 +217,9 @@ class ProcessingService:
             return {
                 "success": True,
                 "file_id": file_id,
-                "text_length": extraction_result.get("text_length", 0),
-                "page_count": extraction_result.get("page_count", 0),
-                "chunk_count": embedding_result.get("chunk_count", 0),
+                "text_length": langchain_result.get("text_length", 0),
+                "page_count": 0,  # LangChain doesn't track page count in this simple version
+                "chunk_count": langchain_result.get("chunk_count", 0),
                 "metadata": metadata_result.get("metadata", {}),
                 "status": FileStatus.REVIEW_PENDING.value,
             }
@@ -271,19 +249,21 @@ class ProcessingService:
 
             return {"success": False, "file_id": file_id, "error": str(e)}
 
-    async def _create_document_for_review(self, file_id: str, ai_metadata: Dict[str, Any]) -> str:
+    async def _update_document_with_metadata(
+        self, file_id: str, ai_metadata: Dict[str, Any]
+    ) -> str:
         """
-        Create document record during processing for review queue.
+        Update existing document record with AI-extracted metadata.
 
         Args:
             file_id: Processing file ID
             ai_metadata: Extracted AI metadata
 
         Returns:
-            Created document ID
+            Document ID
         """
         try:
-            # Get processing file record
+            # Get processing file record and its document
             client = await db.get_supabase_client()
             file_result = (
                 await client.table("processing_files").select("*").eq("id", file_id).execute()
@@ -293,18 +273,21 @@ class ProcessingService:
                 raise ValueError(f"Processing file {file_id} not found")
 
             file_record = file_result.data[0]
+            document_id = file_record.get("document_id")
 
-            # Create document record with AI-extracted metadata
+            if not document_id:
+                raise ValueError(f"No document linked to processing file {file_id}")
+
+            # Update document record with AI-extracted metadata
             # Only use columns that exist in actual database schema
-            document_data = {
-                # Required fields
-                "title": ai_metadata.get("title", file_record["original_filename"]),
-                "filename": file_record["original_filename"],
-                "doc_type": ai_metadata.get("doc_type", "other"),
-                # Optional fields that exist in schema (from database.types.ts)
+            document_update_data = {
+                # Update title if AI found a better one
+                "title": ai_metadata.get("title") or file_record["original_filename"],
+                "doc_type": ai_metadata.get("doc_type") or "other",
+                "doc_category": ai_metadata.get("doc_category") or "Other",
+                # Optional fields that exist in schema
                 "authors": ai_metadata.get("authors"),
                 "date": ai_metadata.get("date") or ai_metadata.get("publication_date"),
-                "doc_category": ai_metadata.get("doc_category"),
                 "description": ai_metadata.get("summary"),
                 "case_name": ai_metadata.get("case_name"),
                 "case_number": ai_metadata.get("case_number"),
@@ -314,30 +297,36 @@ class ProcessingService:
                 "confidence_score": ai_metadata.get("confidence_score"),
                 "keywords": ai_metadata.get("keywords"),
                 "citation": ai_metadata.get("bluebook_citation"),
-                "content_hash": file_record.get("content_hash"),
-                "file_size": file_record.get("file_size"),
                 "page_count": file_record.get("page_count"),
                 "word_count": file_record.get("word_count"),
                 "char_count": file_record.get("char_count"),
-                "is_reviewed": False,  # Ready for review
-                "is_deleted": False,
-                "is_archived": False,
+                "status": DocumentStatus.REVIEW_PENDING.value,  # Update status to indicate ready for review
+                "updated_at": datetime.utcnow().isoformat(),
             }
 
-            # Insert document record
-            document_result = await client.table("documents").insert(document_data).execute()
-            document_id: str = str(document_result.data[0]["id"])
+            # Update the existing document record
+            document_result = (
+                await client.table("documents")
+                .update(document_update_data)
+                .eq("id", document_id)
+                .execute()
+            )
 
-            # Update document chunks to reference the new document
+            if not document_result.data:
+                raise ValueError(f"Failed to update document {document_id}")
+
+            # Update document chunks to reference the document (in case they weren't linked before)
             await client.table("document_chunks").update({"document_id": document_id}).eq(
                 "processing_file_id", file_id
             ).execute()
 
-            logger.info(f"✅ Document {document_id} created for file {file_id} and ready for review")
-            return document_id
+            logger.info(
+                f"✅ Document {document_id} updated with AI metadata for file {file_id} and ready for review"
+            )
+            return str(document_id)
 
         except Exception as e:
-            logger.error(f"❌ Failed to create document for file {file_id}: {e}")
+            logger.error(f"❌ Failed to update document with metadata for file {file_id}: {e}")
             raise
 
     async def approve_file_for_library(
@@ -366,58 +355,47 @@ class ProcessingService:
                 raise ValueError(f"File {file_id} not found")
 
             file_record = file_result.data[0]
+            document_id = file_record.get("document_id")
+
+            if not document_id:
+                raise ValueError(f"No document linked to processing file {file_id}")
 
             if file_record["status"] != FileStatus.REVIEW_PENDING.value:
                 raise ValueError(
                     f"File {file_id} is not ready for review (status: {file_record['status']})"
                 )
 
-            # Create document record in the main documents table
-            document_data = {
-                "title": file_record.get("ai_title", file_record["original_filename"]),
-                "authors": file_record.get("ai_authors", []),
-                "publication_date": file_record.get("ai_publication_date"),
-                "doc_type": file_record.get("ai_doc_type", "other"),
-                "doc_category": file_record.get("ai_doc_category", "Other"),
-                "description": file_record.get("ai_description", ""),
-                "keywords": file_record.get("ai_keywords", []),
-                "bluebook_citation": file_record.get("ai_bluebook_citation"),
-                "content_hash": file_record["content_hash"],
-                "stored_path": file_record["stored_path"],
-                "file_size": file_record["file_size"],
-                "mime_type": file_record["mime_type"],
-                "page_count": file_record.get("page_count", 1),
-                "word_count": file_record.get("word_count", 0),
-                "char_count": file_record.get("char_count", 0),
-                "chunk_count": file_record.get("chunk_count", 0),
-                "status": DocumentStatus.ACTIVE.value,
+            # Update existing document to mark as approved and active
+            document_update_data = {
+                "status": DocumentStatus.ACTIVE.value,  # Change from processing/review_pending to active
+                "is_reviewed": True,
                 "reviewed_by": reviewer_id,
                 "reviewed_at": datetime.utcnow().isoformat(),
                 "review_notes": review_notes,
-                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat(),
             }
 
-            # Insert document record
-            client = await db.get_supabase_client()
-            document_result = await client.table("documents").insert(document_data).execute()
-            document_id = document_result.data[0]["id"]
+            # Update the document record
+            document_result = (
+                await client.table("documents")
+                .update(document_update_data)
+                .eq("id", document_id)
+                .execute()
+            )
+
+            if not document_result.data:
+                raise ValueError(f"Failed to update document {document_id}")
 
             # Update processing file status
             await self._update_file_status(
                 file_id,
                 FileStatus.APPROVED,
-                document_id=document_id,
                 reviewed_by=reviewer_id,
                 reviewed_at=datetime.utcnow().isoformat(),
                 review_notes=review_notes,
             )
 
-            # Update document chunks to reference the new document
-            await client.table("document_chunks").update({"document_id": document_id}).eq(
-                "processing_file_id", file_id
-            ).execute()
-
-            logger.info(f"File {file_id} approved and added to library as document {document_id}")
+            logger.info(f"File {file_id} approved and document {document_id} moved to library")
 
             return {
                 "success": True,
