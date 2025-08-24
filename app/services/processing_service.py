@@ -156,7 +156,7 @@ class ProcessingService:
                 raise ValueError(f"File {file_id} not found")
 
             file_record = file_result.data[0]
-            file_path = file_record.get("file_path")
+            file_path = file_record.get("stored_path")
 
             if not file_path:
                 raise ValueError(f"File path not found for file {file_id}")
