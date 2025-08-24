@@ -71,7 +71,8 @@ async def list_processing_batches(
     """
     try:
         # Build query
-        query = db.supabase.table("processing_jobs").select(
+        client = await db.get_supabase_client()
+        query = client.table("processing_jobs").select(
             "id, total_files, processed_files, completed_files, failed_files, "
             "status, created_at, updated_at"
         )
@@ -103,8 +104,9 @@ async def list_files_pending_review(
     - Returns files with status 'ready_for_review'
     """
     try:
-        result = (
-            db.supabase.table("processing_files")
+        client = await db.get_supabase_client()
+        result = await (
+            client.table("processing_files")
             .select(
                 "id, batch_id, original_filename, ai_title, ai_doc_type, ai_doc_category, "
                 "ai_description, page_count, word_count, created_at, updated_at"
@@ -146,8 +148,9 @@ async def get_processing_file_details(
             FileStatus.REVIEW_PENDING.value,
             FileStatus.APPROVED.value,
         ]:
-            chunks_result = (
-                db.supabase.table("document_chunks")
+            client = await db.get_supabase_client()
+            chunks_result = await (
+                client.table("document_chunks")
                 .select("id", count="exact")
                 .eq("processing_file_id", file_id)
                 .execute()
@@ -174,8 +177,9 @@ async def get_extracted_text(
     - Returns extracted text content (truncated if necessary)
     """
     try:
-        result = (
-            db.supabase.table("processing_files")
+        client = await db.get_supabase_client()
+        result = await (
+            client.table("processing_files")
             .select("extracted_text, status")
             .eq("id", file_id)
             .execute()
@@ -223,8 +227,9 @@ async def get_file_chunks(
     - Returns paginated list of text chunks with embeddings metadata
     """
     try:
-        result = (
-            db.supabase.table("document_chunks")
+        client = await db.get_supabase_client()
+        result = await (
+            client.table("document_chunks")
             .select("id, chunk_index, text_content, token_count, created_at")
             .eq("processing_file_id", file_id)
             .order("chunk_index")
@@ -256,8 +261,9 @@ async def retry_file_processing(
     """
     try:
         # Get current file status
-        result = (
-            db.supabase.table("processing_files")
+        client = await db.get_supabase_client()
+        result = await (
+            client.table("processing_files")
             .select("status, retry_count")
             .eq("id", file_id)
             .execute()
@@ -287,7 +293,9 @@ async def retry_file_processing(
 
         from app.models.enums import FileStatus
 
-        db.supabase.table("processing_files").update(
+        client = await db.get_supabase_client()
+
+        await client.table("processing_files").update(
             {
                 "status": FileStatus.UPLOADED.value,
                 "retry_count": retry_count + 1,

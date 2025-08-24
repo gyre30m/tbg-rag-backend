@@ -6,9 +6,8 @@ Handles both direct Supabase operations and raw SQL when needed.
 import logging
 from typing import Optional
 
-from supabase import AsyncClient, acreate_client
-
 from app.core.config import settings
+from supabase import AsyncClient, acreate_client  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +15,7 @@ logger = logging.getLogger(__name__)
 class DatabaseManager:
     """Manages database connections and operations."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._supabase_client: Optional[AsyncClient] = None
 
     async def get_supabase_client(self) -> AsyncClient:

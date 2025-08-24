@@ -51,8 +51,9 @@ class EmbeddingService:
 
         try:
             # Get file record with extracted text
-            file_result = (
-                db.supabase.table("processing_files").select("*").eq("id", file_id).execute()
+            client = await db.get_supabase_client()
+            file_result = await (
+                client.table("processing_files").select("*").eq("id", file_id).execute()
             )
             if not file_result.data:
                 raise ValueError(f"File {file_id} not found")
@@ -63,7 +64,7 @@ class EmbeddingService:
                 raise ValueError(f"No extracted text found for file {file_id}")
 
             # Update status to generating embeddings
-            self._update_file_status(file_id, FileStatus.GENERATING_EMBEDDINGS)
+            await self._update_file_status(file_id, FileStatus.GENERATING_EMBEDDINGS)
 
             # Split text into chunks
             text_length = len(file_record["extracted_text"])
@@ -79,21 +80,25 @@ class EmbeddingService:
 
             # Generate embeddings for chunks
             embed_start = time.time()
-            logger.info(f"🧠 OPENAI: Generating embeddings for {len(chunks)} chunks from file {file_id}")
+            logger.info(
+                f"🧠 OPENAI: Generating embeddings for {len(chunks)} chunks from file {file_id}"
+            )
             embeddings_result = await self._generate_chunk_embeddings(chunks)
             embed_duration = time.time() - embed_start
 
             if embeddings_result["success"]:
-                logger.info(f"✅ OPENAI: Generated embeddings for file {file_id} in {embed_duration:.2f}s")
-                
+                logger.info(
+                    f"✅ OPENAI: Generated embeddings for file {file_id} in {embed_duration:.2f}s"
+                )
+
                 # Save embeddings to database
                 save_start = time.time()
                 logger.info(f"💾 DATABASE: Saving {len(chunks)} chunks for file {file_id}")
                 await self._save_embeddings(file_id, chunks, embeddings_result["embeddings"])
                 save_duration = time.time() - save_start
                 logger.info(f"✅ DATABASE: Saved chunks for file {file_id} in {save_duration:.2f}s")
-                
-                self._update_file_status(file_id, FileStatus.REVIEW_PENDING)
+
+                await self._update_file_status(file_id, FileStatus.REVIEW_PENDING)
 
                 total_duration = time.time() - start_time
                 logger.info(
@@ -110,14 +115,16 @@ class EmbeddingService:
                     ),
                 }
             else:
-                self._update_file_status(
+                await self._update_file_status(
                     file_id, FileStatus.EMBEDDING_FAILED, error_message=embeddings_result["error"]
                 )
                 return {"success": False, "file_id": file_id, "error": embeddings_result["error"]}
 
         except Exception as e:
             logger.error(f"Embedding generation failed for file {file_id}: {e}")
-            self._update_file_status(file_id, FileStatus.EMBEDDING_FAILED, error_message=str(e))
+            await self._update_file_status(
+                file_id, FileStatus.EMBEDDING_FAILED, error_message=str(e)
+            )
             return {"success": False, "file_id": file_id, "error": str(e)}
 
     def _split_text_into_chunks(self, text: str) -> List[str]:
@@ -211,13 +218,14 @@ class EmbeddingService:
                 )
 
             # Insert chunks in batches
+            client = await db.get_supabase_client()
             batch_size = 100
             for i in range(0, len(chunk_data), batch_size):
                 batch = chunk_data[i : i + batch_size]
-                db.supabase.table("document_chunks").insert(batch).execute()
+                await client.table("document_chunks").insert(batch).execute()
 
             # Update processing file with chunk count
-            db.supabase.table("processing_files").update({"chunk_count": len(chunks)}).eq(
+            await client.table("processing_files").update({"chunk_count": len(chunks)}).eq(
                 "id", file_id
             ).execute()
 
@@ -285,7 +293,8 @@ class EmbeddingService:
             """
 
             # Execute similarity search
-            result = db.supabase.rpc("sql_query", {"query": sql_query}).execute()
+            client = await db.get_supabase_client()
+            result = await client.rpc("sql_query", {"query": sql_query}).execute()
 
             # Filter by similarity threshold
             similar_chunks = []
@@ -309,7 +318,7 @@ class EmbeddingService:
             logger.error(f"Similarity search failed: {e}")
             return []
 
-    def _update_file_status(self, file_id: str, status: FileStatus, **kwargs):
+    async def _update_file_status(self, file_id: str, status: FileStatus, **kwargs):
         """Update file processing status."""
         try:
             update_data = {
@@ -318,7 +327,8 @@ class EmbeddingService:
                 **kwargs,
             }
 
-            db.supabase.table("processing_files").update(update_data).eq("id", file_id).execute()
+            client = await db.get_supabase_client()
+            await client.table("processing_files").update(update_data).eq("id", file_id).execute()
 
         except Exception as e:
             logger.error(f"Failed to update file {file_id} status: {e}")

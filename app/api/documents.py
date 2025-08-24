@@ -9,7 +9,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.security import verify_jwt_token
-from app.models.documents import DocumentSearchRequest, DocumentUpdate, VectorSearchResponse
+from app.models.documents import (
+    DocumentSearchRequest,
+    DocumentSearchResult,
+    DocumentUpdate,
+    VectorSearchResponse,
+)
 from app.models.enums import DocumentStatus, FileStatus
 from app.models.processing import UploadResponse
 from app.services.embedding_service import EmbeddingService
@@ -163,8 +168,22 @@ async def search_documents(
             doc_categories=search_request.doc_categories,
         )
 
+        # Convert dictionary results to DocumentSearchResult objects
+        results = [
+            DocumentSearchResult(
+                text_content=chunk.get("text_content", ""),
+                chunk_index=chunk.get("chunk_index", 0),
+                filename=chunk.get("filename", ""),
+                title=chunk.get("title"),
+                doc_type=chunk.get("doc_type"),
+                doc_category=chunk.get("doc_category"),
+                similarity_score=chunk.get("similarity_score", 0.0),
+            )
+            for chunk in similar_chunks
+        ]
+
         return VectorSearchResponse(
-            query=search_request.query, results=similar_chunks, total_results=len(similar_chunks)
+            query=search_request.query, results=results, total_results=len(results)
         )
     except Exception as e:
         logger.error(f"Search failed: {e}")
@@ -192,8 +211,9 @@ async def list_library_documents(
         from app.core.database import db
 
         # Build query
+        client = await db.get_supabase_client()
         query = (
-            db.supabase.table("documents")
+            client.table("documents")
             .select(
                 "id, title, authors, publication_date, doc_type, doc_category, "
                 "description, keywords, page_count, word_count, created_at, reviewed_by"
@@ -546,8 +566,9 @@ async def delete_document(
         user_id = current_user.get("sub")
 
         # Update document status to deleted
-        result = (
-            db.supabase.table("documents")
+        client = await db.get_supabase_client()
+        result = await (
+            client.table("documents")
             .update(
                 {
                     "status": DocumentStatus.DELETED.value,

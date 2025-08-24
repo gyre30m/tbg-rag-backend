@@ -67,8 +67,9 @@ class ProcessingService:
 
         try:
             # Get all files in the batch
-            files_result = (
-                db.supabase.table("processing_files")
+            client = await db.get_supabase_client()
+            files_result = await (
+                client.table("processing_files")
                 .select("id, status")
                 .eq("batch_id", batch_id)
                 .execute()
@@ -89,7 +90,7 @@ class ProcessingService:
                 }
 
             # Update batch status to processing
-            self._update_batch_status(batch_id, BatchStatus.PROCESSING)
+            await self._update_batch_status(batch_id, BatchStatus.PROCESSING)
 
             # Process files with concurrency control
             semaphore = asyncio.Semaphore(self.max_concurrent_files)
@@ -103,7 +104,7 @@ class ProcessingService:
 
             # Update batch with final status
             final_status = BatchStatus.PROCESSING_COMPLETE if failed == 0 else BatchStatus.FAILED
-            self._update_batch_status(
+            await self._update_batch_status(
                 batch_id, final_status, processed_files=successful, failed_files=failed
             )
 
@@ -122,7 +123,7 @@ class ProcessingService:
 
         except Exception as e:
             logger.error(f"Batch processing failed for batch {batch_id}: {e}")
-            self._update_batch_status(batch_id, BatchStatus.FAILED, error_message=str(e))
+            await self._update_batch_status(batch_id, BatchStatus.FAILED, error_message=str(e))
             return {"success": False, "batch_id": batch_id, "error": str(e)}
 
     async def _process_file_with_semaphore(
@@ -199,7 +200,9 @@ class ProcessingService:
 
             # Mark file as ready for review
             logger.info(f"📋 Marking file {file_id} as ready for review")
-            await self._update_file_status(file_id, FileStatus.REVIEW_PENDING, document_id=document_id)
+            await self._update_file_status(
+                file_id, FileStatus.REVIEW_PENDING, document_id=document_id
+            )
 
             total_duration = time.time() - start_time
             logger.info(
@@ -221,7 +224,9 @@ class ProcessingService:
             logger.error(
                 f"💥 PIPELINE FAILED: File {file_id} failed after {total_duration:.2f}s: {e}"
             )
-            await self._update_file_status(file_id, FileStatus.EXTRACTION_FAILED, error_message=str(e))
+            await self._update_file_status(
+                file_id, FileStatus.EXTRACTION_FAILED, error_message=str(e)
+            )
             return {"success": False, "file_id": file_id, "error": str(e)}
 
     async def _create_document_for_review(self, file_id: str, ai_metadata: Dict[str, Any]) -> str:
@@ -279,7 +284,7 @@ class ProcessingService:
 
             # Insert document record
             document_result = await client.table("documents").insert(document_data).execute()
-            document_id = document_result.data[0]["id"]
+            document_id: str = str(document_result.data[0]["id"])
 
             # Update document chunks to reference the new document
             await client.table("document_chunks").update({"document_id": document_id}).eq(
@@ -311,8 +316,9 @@ class ProcessingService:
 
         try:
             # Get processing file record
-            file_result = (
-                db.supabase.table("processing_files").select("*").eq("id", file_id).execute()
+            client = await db.get_supabase_client()
+            file_result = await (
+                client.table("processing_files").select("*").eq("id", file_id).execute()
             )
             if not file_result.data:
                 raise ValueError(f"File {file_id} not found")
@@ -350,11 +356,12 @@ class ProcessingService:
             }
 
             # Insert document record
-            document_result = db.supabase.table("documents").insert(document_data).execute()
+            client = await db.get_supabase_client()
+            document_result = await client.table("documents").insert(document_data).execute()
             document_id = document_result.data[0]["id"]
 
             # Update processing file status
-            self._update_file_status(
+            await self._update_file_status(
                 file_id,
                 FileStatus.APPROVED,
                 document_id=document_id,
@@ -364,7 +371,7 @@ class ProcessingService:
             )
 
             # Update document chunks to reference the new document
-            db.supabase.table("document_chunks").update({"document_id": document_id}).eq(
+            await client.table("document_chunks").update({"document_id": document_id}).eq(
                 "processing_file_id", file_id
             ).execute()
 
@@ -399,7 +406,7 @@ class ProcessingService:
 
         try:
             # Update processing file status
-            self._update_file_status(
+            await self._update_file_status(
                 file_id,
                 FileStatus.REJECTED,
                 reviewed_by=reviewer_id,
@@ -432,8 +439,9 @@ class ProcessingService:
         """
         try:
             # Get batch info
-            batch_result = (
-                db.supabase.table("processing_jobs").select("*").eq("id", batch_id).execute()
+            client = await db.get_supabase_client()
+            batch_result = await (
+                client.table("processing_jobs").select("*").eq("id", batch_id).execute()
             )
             if not batch_result.data:
                 raise ValueError(f"Batch {batch_id} not found")
@@ -441,8 +449,8 @@ class ProcessingService:
             batch_info = batch_result.data[0]
 
             # Get file statuses
-            files_result = (
-                db.supabase.table("processing_files")
+            files_result = await (
+                client.table("processing_files")
                 .select("id, original_filename, status, error_message, created_at, updated_at")
                 .eq("batch_id", batch_id)
                 .execute()
@@ -483,7 +491,7 @@ class ProcessingService:
             logger.error(f"Failed to update file {file_id} status: {e}")
             raise
 
-    def _update_batch_status(self, batch_id: str, status: BatchStatus, **kwargs):
+    async def _update_batch_status(self, batch_id: str, status: BatchStatus, **kwargs):
         """Update batch processing status."""
         try:
             update_data = {
@@ -492,7 +500,8 @@ class ProcessingService:
                 **kwargs,
             }
 
-            db.supabase.table("processing_jobs").update(update_data).eq("id", batch_id).execute()
+            client = await db.get_supabase_client()
+            await client.table("processing_jobs").update(update_data).eq("id", batch_id).execute()
 
         except Exception as e:
             logger.error(f"Failed to update batch {batch_id} status: {e}")

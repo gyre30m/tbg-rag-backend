@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     openai_api_key: str
     anthropic_api_key: str
 
+    # Webhook Configuration
+    webhook_secret: Optional[str] = None
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
@@ -63,4 +66,5 @@ class Settings(BaseSettings):
 
 
 # Global settings instance
-settings = Settings()
+# Settings are populated from environment variables via Pydantic BaseSettings
+settings = Settings()  # type: ignore[call-arg]

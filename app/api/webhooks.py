@@ -139,7 +139,8 @@ async def handle_file_processing_completed(payload: Dict[str, Any]) -> Dict[str,
             if "text_length" in metrics:
                 update_data["char_count"] = metrics["text_length"]
 
-        db.supabase.table("processing_files").update(update_data).eq("id", file_id).execute()
+        client = await db.get_supabase_client()
+        await client.table("processing_files").update(update_data).eq("id", file_id).execute()
 
         logger.info(f"Updated file {file_id} status to {new_status.value}")
 
@@ -190,7 +191,8 @@ async def handle_batch_processing_completed(payload: Dict[str, Any]) -> Dict[str
             final_status = BatchStatus.FAILED
 
         # Update batch record
-        db.supabase.table("processing_jobs").update(
+        client = await db.get_supabase_client()
+        await client.table("processing_jobs").update(
             {
                 "status": final_status.value,
                 "completed_files": completed_files,
@@ -233,7 +235,9 @@ async def handle_processing_error(payload: Dict[str, Any]) -> Dict[str, Any]:
 
         if file_id:
             # Update file with error status
-            db.supabase.table("processing_files").update(
+            client = await db.get_supabase_client()
+
+            await client.table("processing_files").update(
                 {
                     "status": FileStatus.EXTRACTION_FAILED.value,
                     "error_message": error_message,
@@ -245,7 +249,9 @@ async def handle_processing_error(payload: Dict[str, Any]) -> Dict[str, Any]:
 
         if batch_id:
             # Update batch with error status
-            db.supabase.table("processing_jobs").update(
+            client = await db.get_supabase_client()
+
+            await client.table("processing_jobs").update(
                 {
                     "status": BatchStatus.FAILED.value,
                     "error_message": error_message,

@@ -59,7 +59,8 @@ class FileService:
         }
 
         logger.info(f"📝 Creating processing job for {len(files)} files")
-        job_result = db.supabase.table("processing_jobs").insert(job_data).execute()
+        client = await db.get_supabase_client()
+        job_result = await client.table("processing_jobs").insert(job_data).execute()
         job_id = job_result.data[0]["id"]
         logger.info(f"✅ Processing job created: {job_id}")
 
@@ -76,18 +77,25 @@ class FileService:
 
                 if file_result["success"]:
                     uploaded_files.append(file_result["file_id"])
-                    logger.info(f"✅ File processed successfully: {file.filename} in {file_duration:.2f}s")
+                    logger.info(
+                        f"✅ File processed successfully: {file.filename} in {file_duration:.2f}s"
+                    )
                 else:
                     failed_files.append({"filename": file.filename, "error": file_result["error"]})
-                    logger.error(f"❌ File processing failed: {file.filename} - {file_result['error']} ({file_duration:.2f}s)")
+                    logger.error(
+                        f"❌ File processing failed: {file.filename} - {file_result['error']} ({file_duration:.2f}s)"
+                    )
 
             except Exception as e:
                 file_duration = time.time() - file_start
-                logger.error(f"❌ Exception processing file {file.filename}: {e} ({file_duration:.2f}s)")
+                logger.error(
+                    f"❌ Exception processing file {file.filename}: {e} ({file_duration:.2f}s)"
+                )
                 failed_files.append({"filename": file.filename, "error": str(e)})
 
         # Update job with results
-        db.supabase.table("processing_jobs").update(
+        client = await db.get_supabase_client()
+        await client.table("processing_jobs").update(
             {
                 "status": BatchStatus.PROCESSING.value
                 if uploaded_files
@@ -109,9 +117,11 @@ class FileService:
             success_count=len(uploaded_files),
             error_count=len(failed_files),
         )
-        
+
         total_duration = time.time() - start_time
-        logger.info(f"🎯 UPLOAD COMPLETE: {len(uploaded_files)} successful, {len(failed_files)} failed in {total_duration:.2f}s")
+        logger.info(
+            f"🎯 UPLOAD COMPLETE: {len(uploaded_files)} successful, {len(failed_files)} failed in {total_duration:.2f}s"
+        )
 
     async def _process_single_file(
         self, file: UploadFile, job_id: str, user_id: str
@@ -141,8 +151,9 @@ class FileService:
             content_hash = calculate_content_hash(content)
 
             # Check for existing document with same hash
+            client = await db.get_supabase_client()
             existing = (
-                db.supabase.table("documents")
+                await client.table("documents")
                 .select("id")
                 .eq("content_hash", content_hash)
                 .execute()
@@ -156,7 +167,8 @@ class FileService:
             storage_path = f"uploads/{safe_filename}"
 
             # Upload to Supabase Storage
-            upload_result = db.supabase.storage.from_("documents").upload(
+            client = await db.get_supabase_client()
+            upload_result = await client.storage.from_("documents").upload(
                 storage_path, content, {"content-type": file.content_type}
             )
 
@@ -177,7 +189,7 @@ class FileService:
                 "created_at": datetime.utcnow().isoformat(),
             }
 
-            file_result = db.supabase.table("processing_files").insert(file_data).execute()
+            file_result = await client.table("processing_files").insert(file_data).execute()
             file_record_id = file_result.data[0]["id"]
 
             logger.info(f"Successfully uploaded file {file.filename} with ID {file_record_id}")
@@ -205,7 +217,8 @@ class FileService:
                 logger.error(f"Failed to queue file {file_id} for processing: {e}")
 
                 # Mark file as failed
-                db.supabase.table("processing_files").update(
+                client = await db.get_supabase_client()
+                await client.table("processing_files").update(
                     {
                         "status": FileStatus.EXTRACTION_FAILED.value,
                         "error_message": f"Failed to queue for processing: {str(e)}",
@@ -223,7 +236,8 @@ class FileService:
             File content as bytes
         """
         try:
-            download_result = db.supabase.storage.from_("documents").download(storage_path)
+            client = await db.get_supabase_client()
+            download_result = await client.storage.from_("documents").download(storage_path)
             return bytes(download_result)
         except Exception as e:
             logger.error(f"Failed to download file {storage_path}: {e}")
@@ -240,7 +254,8 @@ class FileService:
             True if successful, False otherwise
         """
         try:
-            db.supabase.storage.from_("documents").remove([storage_path])
+            client = await db.get_supabase_client()
+            await client.storage.from_("documents").remove([storage_path])
             return True
         except Exception as e:
             logger.error(f"Failed to delete file {storage_path}: {e}")
@@ -265,7 +280,8 @@ class FileService:
                 **kwargs,
             }
 
-            db.supabase.table("processing_files").update(update_data).eq("id", file_id).execute()
+            client = await db.get_supabase_client()
+            await client.table("processing_files").update(update_data).eq("id", file_id).execute()
 
             logger.debug(f"Updated file {file_id} status to {status.value}")
             return True

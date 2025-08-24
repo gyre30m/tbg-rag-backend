@@ -50,8 +50,9 @@ class ExtractionService:
 
         try:
             # Get file record
-            file_result = (
-                db.supabase.table("processing_files").select("*").eq("id", file_id).execute()
+            client = await db.get_supabase_client()
+            file_result = await (
+                client.table("processing_files").select("*").eq("id", file_id).execute()
             )
             if not file_result.data:
                 raise ValueError(f"File {file_id} not found")
@@ -61,7 +62,7 @@ class ExtractionService:
             mime_type = file_record["mime_type"]
 
             # Update status to extracting
-            self._update_file_status(file_id, FileStatus.EXTRACTING_TEXT)
+            await self._update_file_status(file_id, FileStatus.EXTRACTING_TEXT)
 
             # Download file content
             content = await self._download_file_content(storage_path)
@@ -72,7 +73,7 @@ class ExtractionService:
             if extraction_result["success"]:
                 # Save extracted text
                 await self._save_extracted_text(file_id, extraction_result)
-                self._update_file_status(file_id, FileStatus.ANALYZING_METADATA)
+                await self._update_file_status(file_id, FileStatus.ANALYZING_METADATA)
 
                 logger.info(f"Successfully extracted text from file {file_id}")
                 return {
@@ -82,14 +83,16 @@ class ExtractionService:
                     "page_count": extraction_result["page_count"],
                 }
             else:
-                self._update_file_status(
+                await self._update_file_status(
                     file_id, FileStatus.EXTRACTION_FAILED, error_message=extraction_result["error"]
                 )
                 return {"success": False, "file_id": file_id, "error": extraction_result["error"]}
 
         except Exception as e:
             logger.error(f"Text extraction failed for file {file_id}: {e}")
-            self._update_file_status(file_id, FileStatus.EXTRACTION_FAILED, error_message=str(e))
+            await self._update_file_status(
+                file_id, FileStatus.EXTRACTION_FAILED, error_message=str(e)
+            )
             return {"success": False, "file_id": file_id, "error": str(e)}
 
     async def _extract_text_by_type(self, content: bytes, mime_type: str) -> Dict[str, Any]:
@@ -224,7 +227,8 @@ class ExtractionService:
     async def _download_file_content(self, storage_path: str) -> bytes:
         """Download file content from Supabase storage."""
         try:
-            content = db.supabase.storage.from_("documents").download(storage_path)
+            client = await db.get_supabase_client()
+            content = await client.storage.from_("documents").download(storage_path)
             return bytes(content)
         except Exception as e:
             logger.error(f"Failed to download file {storage_path}: {e}")
@@ -240,13 +244,14 @@ class ExtractionService:
                 "char_count": extraction_result["char_count"],
             }
 
-            db.supabase.table("processing_files").update(update_data).eq("id", file_id).execute()
+            client = await db.get_supabase_client()
+            await client.table("processing_files").update(update_data).eq("id", file_id).execute()
 
         except Exception as e:
             logger.error(f"Failed to save extracted text for file {file_id}: {e}")
             raise
 
-    def _update_file_status(self, file_id: str, status: FileStatus, **kwargs):
+    async def _update_file_status(self, file_id: str, status: FileStatus, **kwargs):
         """Update file processing status."""
         try:
             from datetime import datetime
@@ -257,7 +262,8 @@ class ExtractionService:
                 **kwargs,
             }
 
-            db.supabase.table("processing_files").update(update_data).eq("id", file_id).execute()
+            client = await db.get_supabase_client()
+            await client.table("processing_files").update(update_data).eq("id", file_id).execute()
 
         except Exception as e:
             logger.error(f"Failed to update file {file_id} status: {e}")
