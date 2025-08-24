@@ -172,15 +172,19 @@ class LangChainDocumentProcessor:
                 embeddings_list = self.embeddings.embed_documents(chunk_texts)
 
                 # Prepare chunk data for insertion
+                from app.utils.file_utils import calculate_content_hash
+
                 chunks_data = []
                 for i, (chunk, embedding) in enumerate(zip(chunks, embeddings_list)):
+                    chunk_content = chunk.page_content
                     chunks_data.append(
                         {
-                            "file_id": file_id,
+                            "processing_file_id": file_id,  # Use correct field name
                             "chunk_index": i,
-                            "content": chunk.page_content,
+                            "content": chunk_content,
+                            "content_hash": calculate_content_hash(chunk_content.encode("utf-8")),
                             "embedding": embedding,
-                            "metadata": chunk.metadata,
+                            # Note: document_id will be set later when processing completes
                         }
                     )
 
