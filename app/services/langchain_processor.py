@@ -7,8 +7,8 @@ import logging
 import tempfile
 from typing import Any, Dict, List, Optional
 
-from langchain.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import PDFPlumberLoader
 from langchain_community.vectorstores import SupabaseVectorStore
 from langchain_openai import OpenAIEmbeddings
 
@@ -65,9 +65,9 @@ class LangChainDocumentProcessor:
         )
 
         try:
-            # Step 1: Load PDF using LangChain's PyPDFLoader
+            # Step 1: Load PDF using LangChain's PDFPlumberLoader
             processing_logger.log_step("pdf_loading_start", file_id=file_id)
-            loader = PyPDFLoader(file_path)
+            loader = PDFPlumberLoader(file_path)
             documents = loader.load()
 
             # Extract text from all pages
