@@ -81,22 +81,22 @@ class LangChainDocumentProcessor:
 
             # Get file content from Supabase storage
             client = await db.get_supabase_client()
-            response = client.storage.from_("documents").download(file_path)
 
-            # Handle the response to get bytes
-            file_content = None
-            if hasattr(response, "data") and response.data:
-                file_content = response.data
-            elif isinstance(response, bytes):
-                file_content = response
-            else:
-                # Try to get content as bytes
-                file_content = bytes(response)
+            try:
+                # Supabase storage download returns bytes directly
+                file_content = client.storage.from_("documents").download(file_path)
 
-            if not file_content:
-                raise ValueError(
-                    f"Failed to download file from storage: {file_path} - No content received"
-                )
+                if not file_content:
+                    raise ValueError(
+                        f"Failed to download file from storage: {file_path} - No content received"
+                    )
+
+                # Ensure we have bytes
+                if not isinstance(file_content, bytes):
+                    raise ValueError(f"Downloaded content is not bytes: {type(file_content)}")
+
+            except Exception as e:
+                raise ValueError(f"Error downloading file from storage: {file_path} - {str(e)}")
 
             processing_logger.log_step(
                 "file_content_loaded", file_id=file_id, size=len(file_content)
