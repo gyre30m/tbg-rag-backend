@@ -51,12 +51,17 @@ async def startup_event():
     """Application startup tasks."""
     logger.info("Starting TBG RAG Document Ingestion API")
 
-    # Test database connection
-    if await db.health_check():
-        logger.info("Database connection successful")
-    else:
-        logger.error("Database connection failed")
-        raise Exception("Cannot connect to database")
+    # Test database connection with detailed error logging
+    try:
+        if await db.health_check():
+            logger.info("Database connection successful")
+        else:
+            logger.error("Database connection failed - health check returned False")
+            # Don't raise exception - let the app start but log the issue
+            logger.warning("Starting app despite database connection issues")
+    except Exception as e:
+        logger.error(f"Database health check threw exception: {e}")
+        logger.warning("Starting app despite database health check exception")
 
 
 @app.on_event("shutdown")
