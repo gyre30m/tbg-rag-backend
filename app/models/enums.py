@@ -74,13 +74,13 @@ class DocumentCategory(str, Enum):
 
 
 class DocumentStatus(str, Enum):
-    """Document library status enum."""
+    """Document status enum - matches database constraint exactly."""
 
     PROCESSING = "processing"  # Document is being processed
     REVIEW_PENDING = "review_pending"  # Ready for human review
     ACTIVE = "active"  # Approved and in library
-    DELETED = "deleted"
-    ARCHIVED = "archived"
+    DELETED = "deleted"  # Soft deleted
+    ARCHIVED = "archived"  # Archived for long-term storage
 
 
 class LogLevel(str, Enum):
