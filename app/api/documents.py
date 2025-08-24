@@ -171,7 +171,7 @@ async def search_documents(
         # Convert dictionary results to DocumentSearchResult objects
         results = [
             DocumentSearchResult(
-                content=chunk.get("text_content", ""),
+                content=chunk.get("content", ""),
                 chunk_index=chunk.get("chunk_index", 0),
                 filename=chunk.get("filename", ""),
                 title=chunk.get("title"),
