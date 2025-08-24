@@ -128,44 +128,75 @@ class AIService:
             logger.error(f"AI metadata extraction error: {e}")
             return {"success": False, "error": f"AI extraction failed: {str(e)}"}
 
+    def _detect_estate_case(self, text: str, filename: str) -> bool:
+        """Detect if this is likely a wrongful death case based on estate patterns."""
+        import re
+
+        combined_text = f"{filename} {text[:2000]}".lower()
+
+        # Look for estate patterns that indicate wrongful death
+        estate_patterns = [
+            r"\bestate\s+of\s+[a-z]+",
+            r"\bestate\s+v\.",
+            r"[a-z]+\s+estate\s+v\.",
+            r"\bestate\b.*\bv\b",
+            r"\bv\b.*\bestate\b",
+        ]
+
+        for pattern in estate_patterns:
+            if re.search(pattern, combined_text):
+                return True
+
+        return False
+
     def _create_metadata_extraction_prompt(self, text: str, filename: str) -> str:
         """Create prompt for metadata extraction."""
+        # Truncate text to reasonable length for AI processing
+        text_sample = text[:6000] if len(text) > 6000 else text
+
+        # Detect estate case for wrongful death context
+        is_estate_case = self._detect_estate_case(text_sample, filename)
+        estate_context = ""
+        if is_estate_case:
+            estate_context = "\n\nIMPORTANT: This appears to involve an 'Estate of' plaintiff, which typically indicates a Wrongful Death case. Please classify doc_category as 'WD' unless there is clear evidence otherwise."
+
         doc_types = [e.value for e in DocumentType]
         doc_categories = [e.value for e in DocumentCategory]
 
         return f"""
-Analyze this document and extract metadata in JSON format.
+You are a forensic economics expert analyzing legal documents. Extract comprehensive metadata from this document with high accuracy.
 
 Document filename: {filename}
-Document text: {text}
+Document text (first 6000 characters): {text_sample}
 
-Extract the following metadata:
+Extract the following information:
 
-1. title: Clear, descriptive title (if not obvious from text, derive from content)
-2. authors: List of author names (empty list if none found)
-3. publication_date: ISO date if found (YYYY-MM-DD format, null if not found)
+1. title: Clear, descriptive document title (not just filename - analyze content for proper title)
+2. authors: List of document authors, parties, experts, or key persons mentioned
+3. publication_date: Document date in YYYY-MM-DD format (null if not clearly found)
 4. doc_type: One of {doc_types}
-   - book: Books, textbooks, reference materials
+   - book: Books, textbooks, reference materials, manuals
    - article: Academic papers, journal articles, research papers
-   - statute: Laws, regulations, statutes
-   - case_law: Court cases, legal precedents
+   - statute: Laws, regulations, statutes, codes
+   - case_law: Court cases, legal precedents, opinions, rulings
    - expert_report: Expert witness reports, professional analyses
    - other: Any other document type
-5. doc_category: One of {doc_categories}
-   - PI: Personal Injury related
-   - WD: Wrongful Death related
-   - EM: Employment related
-   - BV: Business Valuation related
-   - Other: Other categories
-6. description: Brief 2-3 sentence summary of document content
-7. keywords: List of relevant keywords/tags (5-10 keywords)
-8. bluebook_citation: If this is a legal document (case_law or statute), provide proper Bluebook citation format. Otherwise null.
-9. confidence_scores: Object with confidence (0-1) for each field:
-   - title_confidence
-   - authors_confidence
-   - date_confidence
-   - type_confidence
-   - category_confidence
+5. doc_category: REQUIRED - One of {doc_categories}
+   - Personal Injury: Physical injuries, accidents, medical malpractice, product liability
+   - Wrongful Death: Death cases, estate plaintiffs, survival actions, loss of life
+   - Employment: Wrongful termination, discrimination, workplace harassment, labor disputes
+   - Business Valuation: Company valuations, business disputes, economic analysis, M&A
+   - Other: Contract disputes, property issues, other legal matters
+6. description: Brief 2-3 sentence summary focusing on key findings or purpose
+7. keywords: List of 5-10 relevant legal/economic keywords and key topics
+8. bluebook_citation: For legal documents, provide proper Bluebook citation format (null for non-legal docs)
+9. confidence_scores: Your confidence (0.0 to 1.0) for each extracted field{estate_context}
+
+DOCUMENT CATEGORY GUIDANCE:
+- Look for case names like "Estate of [Name]" or "[Name] Estate" which indicate Wrongful Death (WD)
+- Personal injury involves living persons with physical injuries
+- Employment cases involve workplace issues, termination, discrimination
+- Business valuation involves company values, economic analysis, financial disputes
 
 Return ONLY valid JSON with no additional text or formatting:
 
