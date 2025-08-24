@@ -88,17 +88,32 @@ class LangChainDocumentProcessor:
                     client = await db.get_supabase_client()
                     response = client.storage.from_("documents").download(file_path)
 
-                    if response:
+                    # Handle the response based on its type
+                    file_content = None
+                    if hasattr(response, "data") and response.data:
+                        file_content = response.data
+                    elif isinstance(response, bytes):
+                        file_content = response
+                    else:
+                        # Try to get content as bytes
+                        file_content = bytes(response)
+
+                    if file_content:
                         # Create temporary file
                         temp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-                        temp_file.write(response)
+                        temp_file.write(file_content)
                         temp_file.close()
                         local_file_path = temp_file.name
                         processing_logger.log_step(
-                            "file_downloaded", file_id=file_id, temp_path=local_file_path
+                            "file_downloaded",
+                            file_id=file_id,
+                            temp_path=local_file_path,
+                            size=len(file_content),
                         )
                     else:
-                        raise ValueError(f"Failed to download file from storage: {file_path}")
+                        raise ValueError(
+                            f"Failed to download file from storage: {file_path} - No content received"
+                        )
 
                 except Exception as e:
                     processing_logger.log_error("storage_download_failed", e, file_id=file_id)
