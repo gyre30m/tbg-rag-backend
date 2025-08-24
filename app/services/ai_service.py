@@ -104,23 +104,61 @@ class AIService:
             return {"success": False, "file_id": file_id, "error": str(e)}
 
     async def _extract_metadata_with_ai(self, text: str, filename: str) -> Dict[str, Any]:
-        """Extract metadata using AI models."""
+        """Extract metadata using AI models combined with pattern extraction."""
         try:
             # Truncate text if too long (keep first part for metadata extraction)
             max_chars = 50000  # Reasonable limit for AI processing
             if len(text) > max_chars:
                 text = text[:max_chars] + "...[truncated]"
 
+            # Extract pattern-based metadata first
+            pattern_metadata = self._extract_pattern_metadata(text)
+
             prompt = self._create_metadata_extraction_prompt(text, filename)
 
             # Try Anthropic first if available, fallback to OpenAI, then to basic extraction
             if self.anthropic_client:
-                result = await self._extract_with_anthropic(prompt)
+                ai_result = await self._extract_with_anthropic(prompt)
             elif self.openai_client:
-                result = await self._extract_with_openai(prompt)
+                ai_result = await self._extract_with_openai(prompt)
             else:
                 logger.warning("No AI services available, using basic metadata extraction")
-                result = self._extract_basic_metadata(text, filename)
+                ai_result = self._extract_basic_metadata(text, filename)
+
+            if not ai_result["success"]:
+                return ai_result
+
+            # Combine AI results with pattern extraction
+            metadata = ai_result["metadata"]
+
+            # Use filename as fallback title if AI didn't extract a good one
+            if not metadata.get("title") or metadata["title"] in ["Unknown Title", filename]:
+                metadata["title"] = self._extract_title_from_filename(filename)
+
+            # Add pattern-extracted financial data to metadata
+            if pattern_metadata.get("dollar_amounts"):
+                metadata["identified_amounts"] = pattern_metadata["dollar_amounts"]
+            if pattern_metadata.get("potential_discount_rates"):
+                metadata["identified_rates"] = pattern_metadata["potential_discount_rates"]
+            if pattern_metadata.get("case_names"):
+                metadata["case_citations"] = pattern_metadata["case_names"]
+            if pattern_metadata.get("court"):
+                # Only add if AI didn't extract it
+                if not metadata.get("court"):
+                    metadata["court"] = pattern_metadata["court"]
+
+            # Enhance keywords with pattern-extracted terms
+            ai_keywords = metadata.get("keywords", [])
+            if pattern_metadata.get("case_names"):
+                # Add case parties as keywords
+                for case in pattern_metadata["case_names"][:2]:  # Limit to prevent spam
+                    parties = case.replace(" v. ", " ").split()
+                    ai_keywords.extend([p for p in parties if len(p) > 2])
+
+            # Remove duplicates and limit keywords
+            metadata["keywords"] = list(dict.fromkeys(ai_keywords))[:10]
+
+            result = {"success": True, "metadata": metadata}
 
             return result
 
@@ -148,6 +186,76 @@ class AIService:
                 return True
 
         return False
+
+    def _extract_pattern_metadata(self, text: str) -> Dict[str, Any]:
+        """Extract metadata using regex patterns for forensic economics data."""
+        import re
+
+        metadata: Dict[str, Any] = {}
+
+        # Extract dollar amounts
+        dollar_pattern = r"\$[\d,]+(?:\.\d{2})?(?:\s*(?:million|billion|thousand|M|B|K))?"
+        dollar_matches = re.findall(dollar_pattern, text, re.IGNORECASE)
+        if dollar_matches:
+            metadata["dollar_amounts"] = list(set(dollar_matches[:10]))
+
+        # Extract percentages (potential discount rates)
+        percent_pattern = r"(\d+(?:\.\d+)?)\s*%"
+        percent_matches = re.findall(percent_pattern, text)
+        if percent_matches:
+            rates = [float(p) for p in percent_matches if 0 < float(p) < 30]
+            if rates:
+                metadata["potential_discount_rates"] = list(set(rates[:5]))
+
+        # Extract case citations (e.g., "Smith v. Jones")
+        case_pattern = (
+            r"([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)\s+v\.\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)"
+        )
+        case_matches = re.findall(case_pattern, text[:3000])
+        if case_matches:
+            metadata["case_names"] = [f"{p} v. {d}" for p, d in case_matches[:3]]
+
+        # Extract dates
+        date_patterns = [
+            r"(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}",
+            r"\d{1,2}/\d{1,2}/\d{4}",
+            r"\d{4}-\d{2}-\d{2}",
+        ]
+
+        for pattern in date_patterns:
+            matches = re.findall(pattern, text[:3000], re.IGNORECASE)
+            if matches:
+                metadata["extracted_dates"] = matches[:5]
+                break
+
+        # Extract court names
+        court_patterns = [
+            r"(?:United States |U\.S\. )?(?:District |Circuit |Supreme )?Court[^,\.]{0,30}",
+            r"(?:Superior|Municipal|County) Court[^,\.]{0,30}",
+            r"\d+(?:st|nd|rd|th) (?:Circuit|District)[^,\.]{0,30}",
+        ]
+
+        for pattern in court_patterns:
+            court_match = re.search(pattern, text[:3000], re.IGNORECASE)
+            if court_match:
+                metadata["court"] = court_match.group().strip()
+                break
+
+        return metadata
+
+    def _extract_title_from_filename(self, filename: str) -> str:
+        """Clean up filename to use as fallback title."""
+        import re
+
+        # Remove extension
+        title = re.sub(r"\.[^.]+$", "", filename)
+        # Replace underscores and hyphens with spaces
+        title = re.sub(r"[_-]", " ", title)
+        # Remove extra whitespace
+        title = " ".join(title.split())
+        # Title case
+        title = title.title()
+        return title
 
     def _create_metadata_extraction_prompt(self, text: str, filename: str) -> str:
         """Create prompt for metadata extraction."""
