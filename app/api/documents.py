@@ -190,6 +190,41 @@ async def search_documents(
         raise HTTPException(status_code=500, detail="Search failed")
 
 
+@router.post("/clear-failed", tags=["Documents"])
+async def clear_failed_documents(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    """
+    Clear failed and duplicate files from the processing queue.
+
+    - Removes processing_files with status: failed, extraction_failed, duplicate
+    - Returns count of cleared files
+    """
+    try:
+        from app.core.database import db
+
+        client = await db.get_supabase_client()
+
+        # Delete processing files with failed or duplicate status
+        result = await (
+            client.table("processing_files")
+            .delete()
+            .in_("status", ["failed", "extraction_failed", "duplicate"])
+            .execute()
+        )
+
+        cleared_count = len(result.data) if result.data else 0
+
+        logger.info(
+            f"Cleared {cleared_count} failed/duplicate files for user {current_user.get('sub')}"
+        )
+
+        return {"success": True, "cleared_count": cleared_count}
+    except Exception as e:
+        logger.error(f"Failed to clear failed/duplicate files: {e}")
+        raise HTTPException(status_code=500, detail="Failed to clear queue")
+
+
 @router.get("/library", tags=["Documents"])
 async def list_library_documents(
     limit: int = 50,
@@ -260,10 +295,11 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
 
         # Get all processing files that are not in terminal states
         # This shows files from upload through processing pipeline
+        # Include failed and duplicate files so users can see them in the queue
         processing_files_result = await (
             client.table("processing_files")
             .select("*")
-            .not_.in_("status", ["approved", "rejected", "cancelled", "duplicate"])
+            .not_.in_("status", ["approved", "rejected", "cancelled"])
             .order("created_at", desc=True)
             .execute()
         )
@@ -282,6 +318,7 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
         total_processing = 0
         total_pending = 0
         total_in_progress = 0
+        total_failed = 0
 
         # First, add all processing files (files in pipeline)
         for processing_file in processing_files_result.data or []:
@@ -314,6 +351,12 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
             elif processing_status == "under_review":
                 display_status = "under_review"
                 total_in_progress += 1
+            elif processing_status in ["extraction_failed", "failed"]:
+                display_status = "failed"
+                total_failed += 1
+            elif processing_status == "duplicate":
+                display_status = "duplicate"
+                total_failed += 1  # Count duplicates as failed for UI purposes
             else:
                 display_status = processing_status
                 total_processing += 1
@@ -393,6 +436,7 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
             "total_processing": total_processing,
             "total_pending": total_pending,
             "total_in_progress": total_in_progress,
+            "total_failed": total_failed,
             "total_documents": len(queue_items),
         }
 

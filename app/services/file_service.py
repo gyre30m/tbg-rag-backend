@@ -81,7 +81,13 @@ class FileService:
                         f"✅ File processed successfully: {file.filename} in {file_duration:.2f}s"
                     )
                 else:
-                    failed_files.append({"filename": file.filename, "error": file_result["error"]})
+                    failure_info = {"filename": file.filename, "error": file_result["error"]}
+                    if file_result.get("is_duplicate"):
+                        failure_info["is_duplicate"] = True
+                        failure_info["existing_document_id"] = file_result.get(
+                            "existing_document_id"
+                        )
+                    failed_files.append(failure_info)
                     logger.error(
                         f"❌ File processing failed: {file.filename} - {file_result['error']} ({file_duration:.2f}s)"
                     )
@@ -159,7 +165,12 @@ class FileService:
                 .execute()
             )
             if existing.data:
-                return {"success": False, "error": "Duplicate document already exists"}
+                return {
+                    "success": False,
+                    "error": "Duplicate document already exists",
+                    "is_duplicate": True,
+                    "existing_document_id": existing.data[0]["id"],
+                }
 
             # Generate unique storage path
             file_id = str(uuid4())
