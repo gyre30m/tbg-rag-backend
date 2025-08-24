@@ -4,7 +4,6 @@ Replaces the complex custom chunking and embedding logic with battle-tested Lang
 """
 
 import logging
-import tempfile
 from typing import Any, Dict, List, Optional
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -69,10 +68,54 @@ class LangChainDocumentProcessor:
         )
 
         try:
-            # Step 1: Load PDF using LangChain's PDFPlumberLoader
+            # Step 1: Download file from Supabase storage if needed
+            import os
+            import tempfile
+
+            from app.core.database import db
+
+            local_file_path = file_path
+            temp_file = None
+
+            # If file_path looks like a Supabase storage path, download it locally
+            if file_path.startswith("uploads/") and not os.path.exists(file_path):
+                processing_logger.log_step(
+                    "downloading_from_storage", file_id=file_id, storage_path=file_path
+                )
+
+                try:
+                    # Get file content from Supabase storage
+                    client = await db.get_supabase_client()
+                    response = client.storage.from_("documents").download(file_path)
+
+                    if response:
+                        # Create temporary file
+                        temp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+                        temp_file.write(response)
+                        temp_file.close()
+                        local_file_path = temp_file.name
+                        processing_logger.log_step(
+                            "file_downloaded", file_id=file_id, temp_path=local_file_path
+                        )
+                    else:
+                        raise ValueError(f"Failed to download file from storage: {file_path}")
+
+                except Exception as e:
+                    processing_logger.log_error("storage_download_failed", e, file_id=file_id)
+                    raise ValueError(f"Could not access file {file_path}: {str(e)}")
+
+            # Step 2: Load PDF using LangChain's PDFPlumberLoader
             processing_logger.log_step("pdf_loading_start", file_id=file_id)
-            loader = PDFPlumberLoader(file_path)
+            loader = PDFPlumberLoader(local_file_path)
             documents = loader.load()
+
+            # Clean up temporary file if created
+            if temp_file and os.path.exists(local_file_path) and local_file_path != file_path:
+                try:
+                    os.unlink(local_file_path)
+                    processing_logger.log_step("temp_file_cleanup", file_id=file_id)
+                except Exception:
+                    pass  # Don't fail processing if cleanup fails
 
             # Extract text from all pages
             full_text = "\n".join([doc.page_content for doc in documents])
