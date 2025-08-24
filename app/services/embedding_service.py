@@ -95,25 +95,18 @@ class EmbeddingService:
                 )
                 chunks = chunks[: self.max_chunks_per_document]
 
-            # Generate embeddings for chunks
+            # Generate and save embeddings in streaming fashion to avoid memory buildup
             embed_start = time.time()
             logger.info(
-                f"🧠 OPENAI: Generating embeddings for {len(chunks)} chunks from file {file_id}"
+                f"🧠 OPENAI: Processing {len(chunks)} chunks from file {file_id} in memory-efficient batches"
             )
-            embeddings_result = await self._generate_chunk_embeddings(chunks)
+
+            # Process embeddings in smaller batches and save immediately
+            embeddings_result = await self._generate_and_save_embeddings_streaming(file_id, chunks)
             embed_duration = time.time() - embed_start
 
             if embeddings_result["success"]:
-                logger.info(
-                    f"✅ OPENAI: Generated embeddings for file {file_id} in {embed_duration:.2f}s"
-                )
-
-                # Save embeddings to database
-                save_start = time.time()
-                logger.info(f"💾 DATABASE: Saving {len(chunks)} chunks for file {file_id}")
-                await self._save_embeddings(file_id, chunks, embeddings_result["embeddings"])
-                save_duration = time.time() - save_start
-                logger.info(f"✅ DATABASE: Saved chunks for file {file_id} in {save_duration:.2f}s")
+                logger.info(f"✅ STREAMING: Processed file {file_id} in {embed_duration:.2f}s")
 
                 await self._update_file_status(file_id, FileStatus.REVIEW_PENDING)
 
@@ -124,12 +117,8 @@ class EmbeddingService:
                 return {
                     "success": True,
                     "file_id": file_id,
-                    "chunk_count": len(chunks),
-                    "embedding_dimension": (
-                        len(embeddings_result["embeddings"][0])
-                        if embeddings_result["embeddings"]
-                        else 0
-                    ),
+                    "chunk_count": embeddings_result.get("chunk_count", 0),
+                    "embedding_dimension": embeddings_result.get("embedding_dimension", 0),
                 }
             else:
                 await self._update_file_status(
@@ -229,37 +218,132 @@ class EmbeddingService:
     ):
         """Save text chunks and their embeddings to the database."""
         try:
-            # Prepare chunk data for batch insert
-            chunk_data = []
-            for i, (chunk_text, embedding) in enumerate(zip(chunks, embeddings)):
-                chunk_data.append(
-                    {
-                        "processing_file_id": file_id,
-                        "chunk_index": i,
-                        "text_content": chunk_text,
-                        "embedding": embedding,
-                        "token_count": len(chunk_text.split()),  # Rough token estimate
-                        "created_at": datetime.utcnow().isoformat(),
-                    }
-                )
-
-            # Insert chunks in batches
             client = await db.get_supabase_client()
-            batch_size = 100
-            for i in range(0, len(chunk_data), batch_size):
-                batch = chunk_data[i : i + batch_size]
-                await client.table("document_chunks").insert(batch).execute()
+
+            # Process and save chunks in smaller batches to avoid memory buildup
+            batch_size = 50  # Smaller batches to reduce memory usage
+            total_chunks = len(chunks)
+
+            for batch_start in range(0, total_chunks, batch_size):
+                batch_end = min(batch_start + batch_size, total_chunks)
+
+                # Create batch data on-demand (not all at once)
+                chunk_batch = []
+                for i in range(batch_start, batch_end):
+                    chunk_batch.append(
+                        {
+                            "processing_file_id": file_id,
+                            "chunk_index": i,
+                            "text_content": chunks[i],
+                            "embedding": embeddings[i],
+                            "token_count": len(chunks[i].split()),
+                            "created_at": datetime.utcnow().isoformat(),
+                        }
+                    )
+
+                # Insert this batch
+                await client.table("document_chunks").insert(chunk_batch).execute()
+
+                # Clear batch from memory immediately
+                del chunk_batch
+
+                logger.debug(f"Saved chunk batch {batch_start + 1}-{batch_end} of {total_chunks}")
 
             # Update processing file with chunk count
             await client.table("processing_files").update({"chunk_count": len(chunks)}).eq(
                 "id", file_id
             ).execute()
 
-            logger.info(f"Saved {len(chunks)} chunks for file {file_id}")
+            logger.info(
+                f"Saved {len(chunks)} chunks for file {file_id} in memory-efficient batches"
+            )
 
         except Exception as e:
             logger.error(f"Failed to save embeddings for file {file_id}: {e}")
             raise
+
+    async def _generate_and_save_embeddings_streaming(
+        self, file_id: str, chunks: List[str]
+    ) -> Dict[str, Any]:
+        """Generate embeddings and save in streaming fashion to avoid memory buildup."""
+        try:
+            client = await db.get_supabase_client()
+            total_chunks = len(chunks)
+            stream_batch_size = 50  # Process this many chunks at a time
+            openai_batch_size = 20  # OpenAI API batch size (smaller to reduce memory)
+            total_saved = 0
+
+            for stream_start in range(0, total_chunks, stream_batch_size):
+                stream_end = min(stream_start + stream_batch_size, total_chunks)
+                stream_chunks = chunks[stream_start:stream_end]
+
+                logger.debug(
+                    f"Processing chunk batch {stream_start + 1}-{stream_end} of {total_chunks}"
+                )
+
+                # Generate embeddings for this stream batch
+                stream_embeddings = []
+                for i in range(0, len(stream_chunks), openai_batch_size):
+                    openai_batch = stream_chunks[i : i + openai_batch_size]
+
+                    try:
+                        response = await asyncio.wait_for(
+                            self.openai_client.embeddings.create(
+                                model=self.embedding_model,
+                                input=openai_batch,
+                                encoding_format="float",
+                            ),
+                            timeout=60.0,
+                        )
+
+                        batch_embeddings = [data.embedding for data in response.data]
+                        stream_embeddings.extend(batch_embeddings)
+
+                        # Rate limiting
+                        await asyncio.sleep(0.1)
+
+                    except asyncio.TimeoutError:
+                        logger.error("Embedding batch timed out")
+                        return {"success": False, "error": "OpenAI embedding API timed out"}
+                    except Exception as e:
+                        logger.error(f"Embedding batch failed: {e}")
+                        return {"success": False, "error": f"OpenAI embedding API failed: {str(e)}"}
+
+                # Save this stream batch immediately
+                chunk_batch = []
+                for i, (chunk_text, embedding) in enumerate(zip(stream_chunks, stream_embeddings)):
+                    chunk_batch.append(
+                        {
+                            "processing_file_id": file_id,
+                            "chunk_index": stream_start + i,
+                            "text_content": chunk_text,
+                            "embedding": embedding,
+                            "token_count": len(chunk_text.split()),
+                            "created_at": datetime.utcnow().isoformat(),
+                        }
+                    )
+
+                # Insert to database
+                await client.table("document_chunks").insert(chunk_batch).execute()
+                total_saved += len(chunk_batch)
+
+                # Clear memory immediately
+                del stream_embeddings
+                del chunk_batch
+
+                logger.debug(f"Saved {len(stream_chunks)} chunks to database")
+
+            # Update processing file with final chunk count
+            await client.table("processing_files").update({"chunk_count": total_saved}).eq(
+                "id", file_id
+            ).execute()
+
+            logger.info(f"Streamed and saved {total_saved} chunks for file {file_id}")
+            return {"success": True, "chunk_count": total_saved, "embedding_dimension": 1536}
+
+        except Exception as e:
+            logger.error(f"Streaming embedding generation error: {e}")
+            return {"success": False, "error": f"Streaming embedding generation failed: {str(e)}"}
 
     async def search_similar_chunks(
         self,
