@@ -285,6 +285,12 @@ class ProcessingService:
 
             # Update document record with AI-extracted metadata
             # Only use columns that exist in actual database schema
+            # Extract case info from pattern-extracted case_citations if available
+            case_name = ai_metadata.get("case_name")
+            if not case_name and ai_metadata.get("case_citations"):
+                # Use the first case citation as case_name
+                case_name = ai_metadata["case_citations"][0]
+
             document_update_data = {
                 # Update title if AI found a better one
                 "title": ai_metadata.get("title") or file_record["original_filename"],
@@ -293,8 +299,8 @@ class ProcessingService:
                 # Optional fields that exist in schema
                 "authors": ai_metadata.get("authors"),
                 "date": ai_metadata.get("date") or ai_metadata.get("publication_date"),
-                "description": ai_metadata.get("summary"),
-                "case_name": ai_metadata.get("case_name"),
+                "description": ai_metadata.get("summary") or ai_metadata.get("description"),
+                "case_name": case_name,
                 "case_number": ai_metadata.get("case_number"),
                 "court": ai_metadata.get("court"),
                 "jurisdiction": ai_metadata.get("jurisdiction"),
