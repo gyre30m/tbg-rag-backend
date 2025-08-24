@@ -78,15 +78,43 @@ async def root():
 
 @app.get("/health", tags=["Health"])
 async def health_check():
-    """Detailed health check endpoint."""
-    try:
-        db_healthy = await db.health_check()
+    """Detailed health check endpoint with dependency verification."""
+    health_status = {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "database": "unknown",
+        "langchain": "unknown",
+        "pdfplumber": "unknown",
+    }
 
-        return {
-            "status": "healthy" if db_healthy else "unhealthy",
-            "database": "connected" if db_healthy else "disconnected",
-            "timestamp": str(datetime.utcnow()),
-        }
+    try:
+        # Test database connection
+        db_healthy = await db.health_check()
+        health_status["database"] = "connected" if db_healthy else "disconnected"
+
+        # Test LangChain imports
+        try:
+            import langchain
+            import langchain_community
+            import langchain_openai
+
+            from app.services.langchain_processor import langchain_processor
+
+            health_status["langchain"] = "imported"
+        except Exception as e:
+            health_status["langchain"] = f"failed: {str(e)}"
+            health_status["status"] = "unhealthy"
+
+        # Test pdfplumber
+        try:
+            import pdfplumber
+
+            health_status["pdfplumber"] = "imported"
+        except Exception as e:
+            health_status["pdfplumber"] = f"failed: {str(e)}"
+            health_status["status"] = "unhealthy"
+
+        return health_status
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail="Service unavailable")
