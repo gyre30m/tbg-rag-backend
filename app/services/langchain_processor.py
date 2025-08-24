@@ -83,8 +83,8 @@ class LangChainDocumentProcessor:
             client = await db.get_supabase_client()
 
             try:
-                # Supabase storage download returns bytes directly
-                file_content = client.storage.from_("documents").download(file_path)
+                # Supabase storage download is async and returns bytes directly
+                file_content = await client.storage.from_("documents").download(file_path)
 
                 if not file_content:
                     raise ValueError(
