@@ -212,7 +212,7 @@ class FileService:
         # Queue each file for text extraction
         for file_id in file_ids:
             try:
-                self.processing_service.queue_text_extraction(file_id)
+                await self.processing_service.queue_text_extraction(file_id)
             except Exception as e:
                 logger.error(f"Failed to queue file {file_id} for processing: {e}")
 
