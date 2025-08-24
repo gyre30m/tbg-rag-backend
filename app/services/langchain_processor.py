@@ -6,8 +6,8 @@ Replaces the complex custom chunking and embedding logic with battle-tested Lang
 import logging
 from typing import Any, Dict, List, Optional
 
+from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PDFPlumberLoader
 from langchain_community.vectorstores import SupabaseVectorStore
 from langchain_openai import OpenAIEmbeddings
 
@@ -68,69 +68,64 @@ class LangChainDocumentProcessor:
         )
 
         try:
-            # Step 1: Download file from Supabase storage if needed
-            import os
-            import tempfile
+            # Step 1: Get file content from Supabase storage (in-memory processing)
+            import io
+
+            import pdfplumber
 
             from app.core.database import db
 
-            local_file_path = file_path
-            temp_file = None
+            processing_logger.log_step(
+                "loading_file_content", file_id=file_id, storage_path=file_path
+            )
 
-            # If file_path looks like a Supabase storage path, download it locally
-            if file_path.startswith("uploads/") and not os.path.exists(file_path):
-                processing_logger.log_step(
-                    "downloading_from_storage", file_id=file_id, storage_path=file_path
+            # Get file content from Supabase storage
+            client = await db.get_supabase_client()
+            response = client.storage.from_("documents").download(file_path)
+
+            # Handle the response to get bytes
+            file_content = None
+            if hasattr(response, "data") and response.data:
+                file_content = response.data
+            elif isinstance(response, bytes):
+                file_content = response
+            else:
+                # Try to get content as bytes
+                file_content = bytes(response)
+
+            if not file_content:
+                raise ValueError(
+                    f"Failed to download file from storage: {file_path} - No content received"
                 )
 
-                try:
-                    # Get file content from Supabase storage
-                    client = await db.get_supabase_client()
-                    response = client.storage.from_("documents").download(file_path)
+            processing_logger.log_step(
+                "file_content_loaded", file_id=file_id, size=len(file_content)
+            )
 
-                    # Handle the response based on its type
-                    file_content = None
-                    if hasattr(response, "data") and response.data:
-                        file_content = response.data
-                    elif isinstance(response, bytes):
-                        file_content = response
-                    else:
-                        # Try to get content as bytes
-                        file_content = bytes(response)
+            # Step 2: Process PDF directly from memory using pdfplumber
+            processing_logger.log_step("pdf_memory_processing_start", file_id=file_id)
 
-                    if file_content:
-                        # Create temporary file
-                        temp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-                        temp_file.write(file_content)
-                        temp_file.close()
-                        local_file_path = temp_file.name
-                        processing_logger.log_step(
-                            "file_downloaded",
-                            file_id=file_id,
-                            temp_path=local_file_path,
-                            size=len(file_content),
-                        )
-                    else:
-                        raise ValueError(
-                            f"Failed to download file from storage: {file_path} - No content received"
-                        )
+            documents = []
+            with io.BytesIO(file_content) as pdf_buffer:
+                with pdfplumber.open(pdf_buffer) as pdf:
+                    full_text_parts = []
+                    for page_num, page in enumerate(pdf.pages):
+                        page_text = page.extract_text()
+                        if page_text:
+                            full_text_parts.append(page_text)
+                            # Create LangChain-compatible document for each page
+                            doc = Document(
+                                page_content=page_text,
+                                metadata={"page": page_num + 1, "source": file_path},
+                            )
+                            documents.append(doc)
 
-                except Exception as e:
-                    processing_logger.log_error("storage_download_failed", e, file_id=file_id)
-                    raise ValueError(f"Could not access file {file_path}: {str(e)}")
-
-            # Step 2: Load PDF using LangChain's PDFPlumberLoader
-            processing_logger.log_step("pdf_loading_start", file_id=file_id)
-            loader = PDFPlumberLoader(local_file_path)
-            documents = loader.load()
-
-            # Clean up temporary file if created
-            if temp_file and os.path.exists(local_file_path) and local_file_path != file_path:
-                try:
-                    os.unlink(local_file_path)
-                    processing_logger.log_step("temp_file_cleanup", file_id=file_id)
-                except Exception:
-                    pass  # Don't fail processing if cleanup fails
+                    processing_logger.log_step(
+                        "pdf_memory_processing_complete",
+                        file_id=file_id,
+                        pages_processed=len(pdf.pages),
+                        documents_created=len(documents),
+                    )
 
             # Extract text from all pages
             full_text = "\n".join([doc.page_content for doc in documents])
