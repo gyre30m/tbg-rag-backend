@@ -52,7 +52,7 @@ class Settings(BaseSettings):
 
     # Development
     debug: bool = False
-    log_level: str = "INFO"
+    log_level: str = "WARNING"  # Use WARNING to prevent Railway treating INFO logs as errors
     codecov_token: Optional[str] = None  # For coverage reporting
 
     @property
