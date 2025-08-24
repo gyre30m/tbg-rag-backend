@@ -13,6 +13,7 @@ import openai
 
 from app.core.config import settings
 from app.core.database import db
+from app.core.logging_utils import processing_logger
 from app.models.enums import FileStatus
 
 logger = logging.getLogger(__name__)
@@ -23,10 +24,15 @@ class EmbeddingService:
 
     def __init__(self):
         self.openai_client = None
-        self.embedding_model = "text-embedding-3-small"  # OpenAI's latest embedding model
-        self.chunk_size = 1000  # Characters per chunk
-        self.chunk_overlap = 200  # Overlap between chunks
+        self.embedding_model = settings.embedding_model
+        self.chunk_size = settings.chunk_size  # Use config value
+        self.chunk_overlap = min(
+            settings.chunk_overlap, settings.chunk_size // 4
+        )  # Ensure overlap is max 25% of chunk size
         self.max_chunks_per_document = 500  # Reasonable limit
+        logger.info(
+            f"Embedding service initialized with chunk_size={self.chunk_size}, chunk_overlap={self.chunk_overlap}"
+        )
 
         # Initialize OpenAI client if API key is available
         if settings.openai_api_key and settings.openai_api_key.strip():
@@ -50,7 +56,7 @@ class EmbeddingService:
             Dict with generation results
         """
         start_time = time.time()
-        logger.info(f"🔗 EMBEDDING START: File {file_id}")
+        processing_logger.log_step("embedding_service_start", file_id=file_id)
 
         if not self.openai_client:
             logger.warning(
@@ -85,20 +91,39 @@ class EmbeddingService:
 
             # Split text into chunks
             text_length = len(file_record["extracted_text"])
-            logger.info(f"📄 CHUNKING: File {file_id} has {text_length} characters")
+            processing_logger.log_step(
+                "text_chunking_start", file_id=file_id, text_length=text_length
+            )
             chunks = self._split_text_into_chunks(file_record["extracted_text"])
-            logger.info(f"✂️ CHUNKS: File {file_id} split into {len(chunks)} chunks")
+            processing_logger.log_step(
+                "text_chunking_complete",
+                file_id=file_id,
+                chunk_count=len(chunks),
+                text_length=text_length,
+            )
+            processing_logger.log_memory_warning(
+                "post_chunking", threshold_mb=200, file_id=file_id, chunk_count=len(chunks)
+            )
 
             if len(chunks) > self.max_chunks_per_document:
-                logger.warning(
-                    f"⚠️ TRUNCATING: File {file_id} has {len(chunks)} chunks, truncating to {self.max_chunks_per_document}"
+                processing_logger.log_step(
+                    "chunk_truncation",
+                    file_id=file_id,
+                    original_chunks=len(chunks),
+                    truncated_to=self.max_chunks_per_document,
                 )
                 chunks = chunks[: self.max_chunks_per_document]
 
             # Generate and save embeddings in streaming fashion to avoid memory buildup
             embed_start = time.time()
-            logger.info(
-                f"🧠 OPENAI: Processing {len(chunks)} chunks from file {file_id} in memory-efficient batches"
+            processing_logger.log_step(
+                "embedding_generation_batch_start",
+                file_id=file_id,
+                total_chunks=len(chunks),
+                max_chunks_per_doc=self.max_chunks_per_document,
+            )
+            processing_logger.log_memory_warning(
+                "pre_embedding_batches", threshold_mb=200, file_id=file_id
             )
 
             # Process embeddings in smaller batches and save immediately
@@ -135,24 +160,53 @@ class EmbeddingService:
 
     def _split_text_into_chunks(self, text: str) -> List[str]:
         """Split text into overlapping chunks for embedding."""
+        processing_logger.log_step(
+            "chunk_splitting_start",
+            text_length=len(text),
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+        )
+
         if len(text) <= self.chunk_size:
+            processing_logger.log_step(
+                "chunk_splitting_single_chunk", text_length=len(text), chunk_size=self.chunk_size
+            )
             return [text]
 
-        chunks = []
+        chunks: List[str] = []
         start = 0
+        iteration_count = 0  # Safety counter to detect infinite loops
 
         while start < len(text):
+            iteration_count += 1
+
+            # Safety check to prevent infinite loops
+            if iteration_count > 10000:  # Reasonable maximum for any document
+                processing_logger.log_error(
+                    "chunk_splitting_infinite_loop_detected",
+                    Exception("Chunking exceeded 10,000 iterations - possible infinite loop"),
+                    text_length=len(text),
+                    chunk_size=self.chunk_size,
+                    chunk_overlap=self.chunk_overlap,
+                    current_start=start,
+                    chunks_created=len(chunks),
+                )
+                break
+
             end = start + self.chunk_size
 
             # If this isn't the last chunk, try to break at a sentence or paragraph
-            if end < len(text):
-                # Look for paragraph break first
-                paragraph_break = text.rfind("\n\n", start, end)
+            # But ensure we don't make chunks too small (min 50% of chunk_size)
+            min_chunk_end = start + (self.chunk_size // 2)
+
+            if end < len(text) and end > min_chunk_end:
+                # Look for paragraph break first (only in second half of chunk)
+                paragraph_break = text.rfind("\n\n", min_chunk_end, end)
                 if paragraph_break > start:
                     end = paragraph_break
                 else:
-                    # Look for sentence break
-                    sentence_break = text.rfind(". ", start, end)
+                    # Look for sentence break (only in second half of chunk)
+                    sentence_break = text.rfind(". ", min_chunk_end, end)
                     if sentence_break > start:
                         end = sentence_break + 1
 
@@ -160,10 +214,44 @@ class EmbeddingService:
             if chunk:
                 chunks.append(chunk)
 
+                # Log progress every 1000 chunks to detect runaway chunking
+                if len(chunks) % 1000 == 0:
+                    processing_logger.log_step(
+                        "chunk_splitting_progress",
+                        chunks_created=len(chunks),
+                        iteration_count=iteration_count,
+                        current_position=start,
+                        text_length=len(text),
+                        progress_percent=round((start / len(text)) * 100, 2),
+                    )
+                    processing_logger.log_memory_warning(
+                        "chunking_memory_check", threshold_mb=1000, chunks_in_memory=len(chunks)
+                    )
+
             # Move start position with overlap
             if end >= len(text):
                 break
-            start = end - self.chunk_overlap
+
+            # Calculate next start position, ensuring forward progress
+            # The next chunk should start at (end - overlap), but never go backwards
+            next_start = end - self.chunk_overlap
+
+            # Critical fix: Ensure we always move forward by at least 50 characters
+            # This prevents infinite loops when sentence breaks create small chunks
+            min_forward_progress = max(
+                50, self.chunk_size // 20
+            )  # At least 5% of chunk size or 50 chars
+            if next_start <= start:
+                next_start = start + min_forward_progress
+
+            start = next_start
+
+        processing_logger.log_step(
+            "chunk_splitting_complete",
+            total_chunks=len(chunks),
+            iteration_count=iteration_count,
+            text_length=len(text),
+        )
 
         return chunks
 
@@ -273,16 +361,40 @@ class EmbeddingService:
             openai_batch_size = 20  # OpenAI API batch size (smaller to reduce memory)
             total_saved = 0
 
+            processing_logger.log_step(
+                "streaming_embeddings_start",
+                file_id=file_id,
+                total_chunks=total_chunks,
+                stream_batch_size=stream_batch_size,
+                openai_batch_size=openai_batch_size,
+            )
+
             for stream_start in range(0, total_chunks, stream_batch_size):
                 stream_end = min(stream_start + stream_batch_size, total_chunks)
                 stream_chunks = chunks[stream_start:stream_end]
 
-                logger.debug(
-                    f"Processing chunk batch {stream_start + 1}-{stream_end} of {total_chunks}"
+                processing_logger.log_step(
+                    "stream_batch_start",
+                    file_id=file_id,
+                    batch_start=stream_start + 1,
+                    batch_end=stream_end,
+                    batch_size=len(stream_chunks),
+                    total_chunks=total_chunks,
+                )
+                processing_logger.log_memory_warning(
+                    "stream_batch_memory_check",
+                    threshold_mb=500,
+                    file_id=file_id,
+                    batch_number=stream_start // stream_batch_size + 1,
                 )
 
                 # Generate embeddings for this stream batch
                 stream_embeddings = []
+                processing_logger.log_step(
+                    "openai_embedding_batches_start",
+                    file_id=file_id,
+                    stream_chunks_count=len(stream_chunks),
+                )
                 for i in range(0, len(stream_chunks), openai_batch_size):
                     openai_batch = stream_chunks[i : i + openai_batch_size]
 
@@ -299,6 +411,17 @@ class EmbeddingService:
                         batch_embeddings = [data.embedding for data in response.data]
                         stream_embeddings.extend(batch_embeddings)
 
+                        processing_logger.log_step(
+                            "openai_batch_complete",
+                            file_id=file_id,
+                            batch_size=len(openai_batch),
+                            embeddings_received=len(batch_embeddings),
+                            total_embeddings_so_far=len(stream_embeddings),
+                        )
+                        processing_logger.log_memory_warning(
+                            "post_openai_batch", threshold_mb=300, file_id=file_id
+                        )
+
                         # Rate limiting
                         await asyncio.sleep(0.1)
 
@@ -310,6 +433,16 @@ class EmbeddingService:
                         return {"success": False, "error": f"OpenAI embedding API failed: {str(e)}"}
 
                 # Save this stream batch immediately
+                processing_logger.log_step(
+                    "database_save_start",
+                    file_id=file_id,
+                    chunks_to_save=len(stream_chunks),
+                    embeddings_to_save=len(stream_embeddings),
+                )
+                processing_logger.log_memory_warning(
+                    "pre_database_save", threshold_mb=500, file_id=file_id
+                )
+
                 chunk_batch = []
                 for i, (chunk_text, embedding) in enumerate(zip(stream_chunks, stream_embeddings)):
                     chunk_batch.append(
@@ -324,25 +457,61 @@ class EmbeddingService:
                     )
 
                 # Insert to database
+                processing_logger.log_step(
+                    "database_insert_start", file_id=file_id, chunk_batch_size=len(chunk_batch)
+                )
                 await client.table("document_chunks").insert(chunk_batch).execute()
                 total_saved += len(chunk_batch)
 
+                processing_logger.log_step(
+                    "database_insert_complete",
+                    file_id=file_id,
+                    chunks_saved=len(chunk_batch),
+                    total_saved=total_saved,
+                )
+
                 # Clear memory immediately
+                processing_logger.log_step(
+                    "memory_cleanup_start",
+                    file_id=file_id,
+                    objects_to_delete=["stream_embeddings", "chunk_batch"],
+                )
                 del stream_embeddings
                 del chunk_batch
 
-                logger.debug(f"Saved {len(stream_chunks)} chunks to database")
+                processing_logger.log_step(
+                    "stream_batch_complete",
+                    file_id=file_id,
+                    chunks_processed=len(stream_chunks),
+                    total_saved=total_saved,
+                )
+                processing_logger.log_memory_warning(
+                    "post_cleanup", threshold_mb=200, file_id=file_id
+                )
 
             # Update processing file with final chunk count
+            processing_logger.log_step(
+                "update_final_chunk_count", file_id=file_id, total_chunks_saved=total_saved
+            )
             await client.table("processing_files").update({"chunk_count": total_saved}).eq(
                 "id", file_id
             ).execute()
 
-            logger.info(f"Streamed and saved {total_saved} chunks for file {file_id}")
+            processing_logger.log_step(
+                "streaming_embeddings_complete",
+                file_id=file_id,
+                total_chunks_saved=total_saved,
+                embedding_dimension=1536,
+            )
             return {"success": True, "chunk_count": total_saved, "embedding_dimension": 1536}
 
         except Exception as e:
-            logger.error(f"Streaming embedding generation error: {e}")
+            processing_logger.log_error(
+                "streaming_embeddings_failed",
+                e,
+                file_id=file_id,
+                total_chunks=total_chunks if "total_chunks" in locals() else "unknown",
+            )
             return {"success": False, "error": f"Streaming embedding generation failed: {str(e)}"}
 
     async def search_similar_chunks(

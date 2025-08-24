@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.core.database import db
+from app.core.logging_utils import processing_logger
 from app.models.enums import BatchStatus, DocumentStatus, FileStatus
 from app.services.ai_service import AIService
 from app.services.embedding_service import EmbeddingService
@@ -144,44 +145,59 @@ class ProcessingService:
             Dict with processing results
         """
         start_time = time.time()
-        logger.info(f"🔧 PIPELINE START: Processing file {file_id}")
+        processing_logger.log_step("pipeline_start", file_id=file_id)
 
         try:
             # Step 1: Text Extraction
             step_start = time.time()
-            logger.info(f"📝 STEP 1: Starting text extraction for file {file_id}")
+            processing_logger.log_step("text_extraction_start", file_id=file_id)
             extraction_result = await self.extraction_service.extract_text_from_file(file_id)
             step_duration = time.time() - step_start
 
             if not extraction_result["success"]:
-                logger.error(
-                    f"❌ STEP 1 FAILED: Text extraction for file {file_id}: {extraction_result['error']} ({step_duration:.2f}s)"
+                processing_logger.log_error(
+                    "text_extraction_failed",
+                    Exception(extraction_result.get("error", "Unknown error")),
+                    file_id=file_id,
+                    duration_seconds=step_duration,
                 )
                 return dict(extraction_result)
-            logger.info(
-                f"✅ STEP 1 SUCCESS: Text extraction completed for file {file_id} in {step_duration:.2f}s"
+            processing_logger.log_step(
+                "text_extraction_complete",
+                file_id=file_id,
+                duration_seconds=step_duration,
+                text_length=len(extraction_result.get("text", "")),
             )
 
             # Step 2: AI Metadata Extraction
             step_start = time.time()
-            logger.info(f"🤖 STEP 2: Starting AI metadata extraction for file {file_id}")
+            processing_logger.log_step("ai_metadata_start", file_id=file_id)
             metadata_result = await self.ai_service.extract_metadata(file_id)
             step_duration = time.time() - step_start
 
             if not metadata_result["success"]:
-                logger.error(
-                    f"❌ STEP 2 FAILED: Metadata extraction for file {file_id}: {metadata_result['error']} ({step_duration:.2f}s)"
+                processing_logger.log_error(
+                    "ai_metadata_failed",
+                    Exception(metadata_result.get("error", "Unknown error")),
+                    file_id=file_id,
+                    duration_seconds=step_duration,
                 )
                 return dict(metadata_result)
-            logger.info(
-                f"✅ STEP 2 SUCCESS: AI metadata extraction completed for file {file_id} in {step_duration:.2f}s"
+            processing_logger.log_step(
+                "ai_metadata_complete", file_id=file_id, duration_seconds=step_duration
             )
 
             # Step 3: Embedding Generation
             step_start = time.time()
-            logger.info(f"🔗 STEP 3: Starting embedding generation for file {file_id}")
+            processing_logger.log_step("embedding_generation_start", file_id=file_id)
+            processing_logger.log_memory_warning(
+                "pre_embedding_generation", threshold_mb=500, file_id=file_id
+            )
             embedding_result = await self.embedding_service.generate_embeddings(file_id)
             step_duration = time.time() - step_start
+            processing_logger.log_memory_warning(
+                "post_embedding_generation", threshold_mb=500, file_id=file_id
+            )
 
             if not embedding_result["success"]:
                 logger.error(
