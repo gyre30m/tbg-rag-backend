@@ -181,7 +181,7 @@ class LangChainDocumentProcessor:
                         {
                             "processing_file_id": file_id,  # Use correct field name
                             "chunk_index": i,
-                            "content": chunk_content,  # Standardize on content field
+                            "text_content": chunk_content,  # Temporarily revert to text_content until migration runs
                             "content_hash": calculate_content_hash(chunk_content.encode("utf-8")),
                             "embedding": embedding,
                             "token_count": len(chunk_content.split()),  # Rough token count

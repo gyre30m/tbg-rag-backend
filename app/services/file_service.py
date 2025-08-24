@@ -158,18 +158,42 @@ class FileService:
 
             # Check for existing document with same hash
             client = await db.get_supabase_client()
-            existing = (
+
+            # Check 1: Documents that are fully processed and in the library
+            existing_documents = (
                 await client.table("documents")
-                .select("id")
+                .select("id, title")
                 .eq("content_hash", content_hash)
+                .eq("is_deleted", False)  # Only check non-deleted documents
                 .execute()
             )
-            if existing.data:
+
+            # Check 2: Processing files that are currently being processed successfully
+            # Exclude failed states: failed, extraction_failed, duplicate, cancelled
+            existing_processing = (
+                await client.table("processing_files")
+                .select("id, original_filename, status")
+                .eq("content_hash", content_hash)
+                .not_.in_("status", ["failed", "extraction_failed", "duplicate", "cancelled"])
+                .execute()
+            )
+
+            if existing_documents.data:
+                document = existing_documents.data[0]
                 return {
                     "success": False,
-                    "error": "Duplicate document already exists",
+                    "error": f"Document already exists in library: {document.get('title', 'Untitled')}",
                     "is_duplicate": True,
-                    "existing_document_id": existing.data[0]["id"],
+                    "existing_document_id": document["id"],
+                }
+
+            if existing_processing.data:
+                processing_file = existing_processing.data[0]
+                return {
+                    "success": False,
+                    "error": f"Document is already being processed: {processing_file.get('original_filename', 'Unknown')} (Status: {processing_file.get('status', 'unknown')})",
+                    "is_duplicate": True,
+                    "existing_processing_file_id": processing_file["id"],
                 }
 
             # Generate unique storage path

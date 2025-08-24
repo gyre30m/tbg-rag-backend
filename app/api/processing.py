@@ -230,7 +230,7 @@ async def get_file_chunks(
         client = await db.get_supabase_client()
         result = await (
             client.table("document_chunks")
-            .select("id, chunk_index, content, token_count, created_at")
+            .select("id, chunk_index, text_content, token_count, created_at")
             .eq("processing_file_id", file_id)
             .order("chunk_index")
             .range(offset, offset + limit - 1)
