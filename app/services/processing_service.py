@@ -318,12 +318,12 @@ class ProcessingService:
                 "confidence_score": ai_metadata.get("confidence_score"),
                 "keywords": ai_metadata.get("keywords"),
                 "citation": ai_metadata.get("bluebook_citation"),
-                # Text metadata from extraction
-                "preview_text": file_record.get("preview_text"),
-                "page_count": file_record.get("page_count"),
-                "word_count": file_record.get("word_count"),
-                "char_count": file_record.get("char_count"),
-                "chunk_count": file_record.get("chunk_count"),
+                # Text metadata from extraction (passed via ai_metadata from langchain processor)
+                "preview_text": ai_metadata.get("preview_text"),
+                "page_count": ai_metadata.get("page_count"),
+                "word_count": ai_metadata.get("word_count"),
+                "char_count": ai_metadata.get("char_count"),
+                "chunk_count": ai_metadata.get("chunk_count"),
                 # Document ready for review - keep is_reviewed=False until human approval
                 "updated_at": datetime.utcnow().isoformat(),
             }

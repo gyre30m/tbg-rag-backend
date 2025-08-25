@@ -73,6 +73,7 @@ class AIService:
 
             # Update status to extracting metadata
             await self._update_file_status(file_id, FileStatus.ANALYZING_METADATA)
+            await self._update_document_processing_status(file_id, "analyzing_metadata")
 
             # Extract metadata using AI
             metadata_result = await self._extract_metadata_with_ai(
@@ -83,12 +84,25 @@ class AIService:
                 # Save metadata to database
                 await self._save_metadata(file_id, metadata_result["metadata"])
                 await self._update_file_status(file_id, FileStatus.GENERATING_EMBEDDINGS)
+                await self._update_document_processing_status(file_id, "generating_embeddings")
+
+                # Include text metrics from the processing file record
+                enhanced_metadata = metadata_result["metadata"].copy()
+                enhanced_metadata.update(
+                    {
+                        "preview_text": file_record.get("preview_text"),
+                        "page_count": file_record.get("page_count"),
+                        "word_count": file_record.get("word_count"),
+                        "char_count": file_record.get("char_count"),
+                        "chunk_count": file_record.get("chunk_count"),
+                    }
+                )
 
                 logger.info(f"Successfully extracted metadata from file {file_id}")
                 return {
                     "success": True,
                     "file_id": file_id,
-                    "metadata": metadata_result["metadata"],
+                    "metadata": enhanced_metadata,
                 }
             else:
                 await self._update_file_status(
@@ -506,4 +520,36 @@ Return ONLY valid JSON with no additional text or formatting:
 
         except Exception as e:
             logger.error(f"Failed to update file {file_id} status: {e}")
+            raise
+
+    async def _update_document_processing_status(self, file_id: str, processing_status: str):
+        """Update document processing status based on processing file ID."""
+        try:
+            client = await db.get_supabase_client()
+
+            # Get document_id from processing file
+            file_result = (
+                await client.table("processing_files")
+                .select("document_id")
+                .eq("id", file_id)
+                .limit(1)
+                .execute()
+            )
+            if not file_result.data:
+                raise ValueError(f"Processing file {file_id} not found")
+
+            document_id = file_result.data[0]["document_id"]
+            if not document_id:
+                raise ValueError(f"No document linked to processing file {file_id}")
+
+            # Update document with processing status
+            update_data = {
+                "processing_status": processing_status,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+            await client.table("documents").update(update_data).eq("id", document_id).execute()
+            logger.info(f"Updated document {document_id} processing_status to {processing_status}")
+
+        except Exception as e:
+            logger.error(f"Failed to update document processing status for file {file_id}: {e}")
             raise
