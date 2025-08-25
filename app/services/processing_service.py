@@ -163,7 +163,7 @@ class ProcessingService:
                 raise ValueError(f"File path not found for file {file_id}")
 
             # Use LangChain processor for extraction, chunking, and embeddings
-            await self._update_document_processing_status(file_id, "generating_embeddings")
+            # Note: LangChain processor handles status updates internally
             try:
                 langchain_result = await langchain_processor.process_pdf_file(file_id, file_path)
             except Exception as e:
@@ -196,9 +196,20 @@ class ProcessingService:
             # Step 3: Update document record with text metrics
             # (AI service already saved metadata directly to documents)
             logger.info(f"📄 STEP 3: Updating document record with text metrics for file {file_id}")
-            document_id = await self._update_document_with_text_metrics(
-                file_id, metadata_result.get("metadata", {})
+
+            # Merge text metrics from langchain with AI metadata
+            combined_metadata = metadata_result.get("metadata", {})
+            combined_metadata.update(
+                {
+                    "preview_text": langchain_result.get("preview_text"),
+                    "page_count": langchain_result.get("page_count"),
+                    "word_count": langchain_result.get("word_count"),
+                    "char_count": langchain_result.get("char_count"),
+                    "chunk_count": langchain_result.get("chunk_count"),
+                }
             )
+
+            document_id = await self._update_document_with_text_metrics(file_id, combined_metadata)
 
             # Mark file as ready for review
             logger.info(f"📋 Marking file {file_id} as ready for review")

@@ -79,6 +79,9 @@ class LangChainDocumentProcessor:
                 "loading_file_content", file_id=file_id, storage_path=file_path
             )
 
+            # Update status to extracting text
+            await self._update_file_status(file_id, FileStatus.EXTRACTING_TEXT)
+
             # Get file content from Supabase storage
             client = await db.get_supabase_client()
 
@@ -242,6 +245,11 @@ class LangChainDocumentProcessor:
                 "text_length": text_length,
                 "chunk_count": len(chunks),
                 "embedding_dimension": 1536 if self.embeddings else 0,
+                # Include text metrics to pass through pipeline
+                "preview_text": preview_text,
+                "page_count": page_count,
+                "word_count": word_count,
+                "char_count": char_count,
             }
 
         except Exception as e:
@@ -266,6 +274,53 @@ class LangChainDocumentProcessor:
             update_data["error_message"] = error
 
         await client.table("processing_files").update(update_data).eq("id", file_id).execute()
+
+        # Also update document processing_status
+        await self._update_document_processing_status(file_id, status)
+
+    async def _update_document_processing_status(self, file_id: str, status: FileStatus):
+        """Update document processing status based on processing file status."""
+        from datetime import datetime
+
+        try:
+            client = await db.get_supabase_client()
+
+            # Get document_id from processing file
+            file_result = (
+                await client.table("processing_files")
+                .select("document_id")
+                .eq("id", file_id)
+                .limit(1)
+                .execute()
+            )
+            if not file_result.data or not file_result.data[0]["document_id"]:
+                return  # No document linked yet
+
+            document_id = file_result.data[0]["document_id"]
+
+            # Map FileStatus to processing_status
+            status_map = {
+                FileStatus.EXTRACTING_TEXT: "extracting_text",
+                FileStatus.ANALYZING_METADATA: "analyzing_metadata",
+                FileStatus.GENERATING_EMBEDDINGS: "generating_embeddings",
+                FileStatus.REVIEW_PENDING: "ready_for_review",
+                FileStatus.EXTRACTION_FAILED: "processing_failed",
+            }
+
+            processing_status = status_map.get(status, "processing")
+
+            # Update document with processing status
+            await client.table("documents").update(
+                {
+                    "processing_status": processing_status,
+                    "updated_at": datetime.utcnow().isoformat(),
+                }
+            ).eq("id", document_id).execute()
+
+            logger.info(f"Updated document {document_id} processing_status to {processing_status}")
+
+        except Exception as e:
+            logger.warning(f"Failed to update document processing status for file {file_id}: {e}")
 
 
 # Global processor instance

@@ -506,22 +506,11 @@ Return ONLY valid JSON with no additional text or formatting:
             title = os.path.splitext(title)[0]
         title = title.replace("_", " ").replace("-", " ").title()
 
-        # Simple heuristics for doc type based on filename
-        doc_type = "other"
-        filename_lower = filename.lower()
-        if any(word in filename_lower for word in ["statute", "law", "code", "regulation"]):
-            doc_type = "statute"
-        elif any(word in filename_lower for word in ["case", "court", "decision", "ruling"]):
-            doc_type = "case_law"
-        elif any(word in filename_lower for word in ["article", "paper", "journal"]):
-            doc_type = "article"
-        elif any(word in filename_lower for word in ["book", "textbook", "manual"]):
-            doc_type = "book"
+        # Enhanced doc type detection using content patterns
+        doc_type = self._detect_document_type(text, filename)
 
-        # Basic summary from first 500 characters
-        summary = text[:500].strip()
-        if len(text) > 500:
-            summary += "..."
+        # Generate proper summary using intelligent extraction
+        summary = self._generate_summary(text, doc_type)
 
         metadata = {
             "title": title,
@@ -586,3 +575,188 @@ Return ONLY valid JSON with no additional text or formatting:
         except Exception as e:
             logger.error(f"Failed to update document processing status for file {file_id}: {e}")
             raise
+
+    def _detect_document_type(self, text: str, filename: str = "") -> str:
+        """Detect document type using pattern scoring from legacy system."""
+
+        text_lower = text[:3000].lower()  # Check first 3000 chars for better accuracy
+        filename_lower = filename.lower()
+
+        # Pattern-based detection with scoring
+        scores = {
+            "case_law": 0,
+            "expert_report": 0,
+            "statute": 0,
+            "article": 0,
+            "book": 0,
+            "other": 0,
+        }
+
+        # Case law patterns (legal cases)
+        case_patterns = [
+            "plaintiff",
+            "defendant",
+            "appellant",
+            "appellee",
+            "court",
+            "appeal",
+            "ruling",
+            "judgment",
+            "opinion",
+            "docket",
+            "civil action",
+            "v.",
+            "vs.",
+            "versus",
+            "case no",
+            "cause no",
+            "filed",
+            "judge",
+        ]
+        for pattern in case_patterns:
+            if pattern in text_lower:
+                scores["case_law"] += 2
+            if pattern in filename_lower:
+                scores["case_law"] += 1
+
+        # Expert report patterns
+        expert_patterns = [
+            "expert report",
+            "economic damages",
+            "present value",
+            "lost earnings",
+            "loss of earnings",
+            "economic loss",
+            "methodology",
+            "discount rate",
+            "worklife expectancy",
+        ]
+        for pattern in expert_patterns:
+            if pattern in text_lower:
+                scores["expert_report"] += 2
+
+        # Statute patterns
+        statute_patterns = [
+            "statute",
+            "section",
+            "§",
+            "subsection",
+            "chapter",
+            "title",
+            "code",
+            "regulation",
+            "enacted",
+        ]
+        for pattern in statute_patterns:
+            if pattern in text_lower:
+                scores["statute"] += 1
+
+        # Academic article patterns
+        article_patterns = [
+            "abstract",
+            "introduction",
+            "methodology",
+            "conclusion",
+            "references",
+            "journal",
+            "volume",
+            "issue",
+            "doi",
+        ]
+        for pattern in article_patterns:
+            if pattern in text_lower:
+                scores["article"] += 1
+
+        # Book patterns
+        book_patterns = [
+            "chapter",
+            "table of contents",
+            "preface",
+            "isbn",
+            "publisher",
+            "edition",
+            "copyright",
+        ]
+        for pattern in book_patterns:
+            if pattern in text_lower:
+                scores["book"] += 1
+
+        # Get the type with highest score
+        max_score = max(scores.values())
+        if max_score > 2:  # Require minimum confidence
+            for doc_type, score in scores.items():
+                if score == max_score:
+                    logger.info(f"Detected doc_type '{doc_type}' with score {score}")
+                    return doc_type
+
+        # Default based on filename hints
+        if any(word in filename_lower for word in ["case", "court", "ruling", "opinion"]):
+            return "case_law"
+        elif any(word in filename_lower for word in ["report", "expert"]):
+            return "expert_report"
+
+        return "other"
+
+    def _generate_summary(self, text: str, doc_type: str) -> str:
+        """Generate intelligent summary based on document type."""
+
+        # Clean up text
+        text = text.strip()
+        if not text:
+            return ""
+
+        # For case law, try to extract case caption and key facts
+        if doc_type == "case_law":
+            lines = text[:2000].split("\n")
+            summary_parts = []
+
+            # Look for case caption (usually near the beginning)
+            for line in lines[:20]:
+                if "v." in line or "vs." in line or "versus" in line.lower():
+                    summary_parts.append(line.strip())
+                    break
+
+            # Look for key facts or holdings
+            text_lower = text[:1500].lower()
+            if "held:" in text_lower:
+                held_index = text_lower.index("held:")
+                summary_parts.append(text[held_index : held_index + 200].split(".")[0] + ".")
+            elif "holding" in text_lower:
+                holding_index = text_lower.index("holding")
+                summary_parts.append(text[holding_index : holding_index + 200].split(".")[0] + ".")
+
+            if summary_parts:
+                return " ".join(summary_parts)[:500]
+
+        # For expert reports, look for opinion summary
+        elif doc_type == "expert_report":
+            text_lower = text[:2000].lower()
+            if "opinion" in text_lower:
+                opinion_index = text_lower.index("opinion")
+                return text[opinion_index : opinion_index + 400].strip()[:500]
+
+        # Default: First meaningful paragraph
+        # Skip headers and get first substantial text
+        lines = text.split("\n")
+        summary_lines = []
+        char_count = 0
+
+        for line in lines:
+            line = line.strip()
+            # Skip short lines (likely headers or page numbers)
+            if len(line) > 50:
+                summary_lines.append(line)
+                char_count += len(line)
+                if char_count > 400:
+                    break
+
+        summary = " ".join(summary_lines)[:500]
+        if len(summary) > 450:
+            # Truncate at last complete sentence
+            last_period = summary.rfind(".")
+            if last_period > 300:
+                summary = summary[: last_period + 1]
+            else:
+                summary = summary.strip() + "..."
+
+        return summary
