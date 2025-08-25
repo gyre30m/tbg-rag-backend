@@ -169,12 +169,22 @@ class FileService:
             )
 
             # Check 2: Processing files that are currently being processed successfully
-            # Exclude failed states: failed, extraction_failed, duplicate, cancelled
+            # Only include active processing states and review states
             existing_processing = (
                 await client.table("processing_files")
                 .select("id, original_filename, status")
                 .eq("content_hash", content_hash)
-                .not_.in_("status", ["failed", "extraction_failed", "duplicate", "cancelled"])
+                .in_(
+                    "status",
+                    [
+                        "uploading",
+                        "extracting",
+                        "analyzing_metadata",
+                        "generating_embeddings",
+                        "review_pending",
+                        "approved",
+                    ],
+                )
                 .execute()
             )
 
@@ -222,6 +232,7 @@ class FileService:
                 "file_size": len(content),
                 "mime_type": file.content_type,
                 "storage_path": storage_path,
+                "processing_status": "uploaded",  # Track detailed pipeline stage
                 "is_reviewed": False,  # Not yet reviewed
                 "is_deleted": False,
                 "is_archived": False,

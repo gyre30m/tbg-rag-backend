@@ -433,11 +433,11 @@ Return ONLY valid JSON with no additional text or formatting:
                 "ai_doc_category": metadata["doc_category"],
                 "ai_description": metadata["description"],
                 "ai_keywords": metadata["keywords"],
-                "ai_bluebook_citation": metadata["bluebook_citation"],
+                "ai_bluebook_citation": metadata.get("case_citations")
+                or metadata["bluebook_citation"],
                 "ai_confidence_scores": metadata["confidence_scores"],
                 # Add pattern-extracted fields
                 "ai_court": metadata.get("court"),
-                "ai_case_citations": metadata.get("case_citations"),
                 "ai_identified_amounts": metadata.get("identified_amounts"),
                 "ai_identified_rates": metadata.get("identified_rates"),
             }

@@ -195,33 +195,40 @@ async def clear_failed_documents(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     """
-    Clear failed and duplicate files from the processing queue.
+    Clear failed documents from the processing queue.
 
-    - Removes processing_files with status: failed, extraction_failed, duplicate
-    - Returns count of cleared files
+    In the new architecture, failed documents are deleted instead of tracking failed status.
+    This endpoint is kept for compatibility but will have no effect since failed documents
+    are already automatically deleted during processing.
     """
     try:
         from app.core.database import db
 
         client = await db.get_supabase_client()
 
-        # Delete processing files with failed or duplicate status
+        # In the new architecture, failed documents are automatically deleted during processing
+        # So there shouldn't be any failed documents to clear, but we'll check for any orphaned
+        # processing_files that might still have failed status and clean those up
+
         result = await (
             client.table("processing_files")
             .delete()
-            .in_("status", ["failed", "extraction_failed", "duplicate"])
+            .in_(
+                "status",
+                ["failed", "extraction_failed", "duplicate", "analysis_failed", "embedding_failed"],
+            )
             .execute()
         )
 
         cleared_count = len(result.data) if result.data else 0
 
         logger.info(
-            f"Cleared {cleared_count} failed/duplicate files for user {current_user.get('sub')}"
+            f"Cleared {cleared_count} orphaned failed processing files for user {current_user.get('sub')}"
         )
 
         return {"success": True, "cleared_count": cleared_count}
     except Exception as e:
-        logger.error(f"Failed to clear failed/duplicate files: {e}")
+        logger.error(f"Failed to clear failed files: {e}")
         raise HTTPException(status_code=500, detail="Failed to clear queue")
 
 
@@ -282,30 +289,17 @@ async def list_library_documents(
 @router.get("/queue", tags=["Documents"])
 async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_user)):
     """
-    Get documents pending review with full metadata.
-
-    Returns ALL documents that need human review - those with is_reviewed = false,
-    including documents that are still being processed. Documents appear in the queue
-    immediately after upload and show their current processing status.
+    Get review queue - simplified approach using only documents table.
+    Documents track their own processing_status, so no need for complex processing_files logic.
     """
     try:
         from app.core.database import db
-
+        
         client = await db.get_supabase_client()
 
-        # Get all processing files that are not in terminal states
-        # This shows files from upload through processing pipeline
-        # Include failed and duplicate files so users can see them in the queue
-        processing_files_result = await (
-            client.table("processing_files")
-            .select("*")
-            .not_.in_("status", ["approved", "rejected", "cancelled"])
-            .order("created_at", desc=True)
-            .execute()
-        )
-
-        # Get documents ready for review (processing complete, not yet reviewed)
-        documents_ready_for_review = await (
+        # Get all documents that are not yet reviewed and not deleted
+        # This includes documents in all processing stages via processing_status
+        documents_result = await (
             client.table("documents")
             .select("*")
             .eq("is_reviewed", False)
@@ -318,125 +312,80 @@ async def get_review_queue(current_user: Dict[str, Any] = Depends(get_current_us
         total_processing = 0
         total_pending = 0
         total_in_progress = 0
-        total_failed = 0
+        # No total_failed needed since failed documents are deleted
 
-        # First, add all processing files (files in pipeline)
-        for processing_file in processing_files_result.data or []:
-            # Skip if this file has a document that's ready for review
-            # (it will be shown in document section instead)
-            if processing_file["document_id"]:
-                # Check if the associated document is ready for review
-                doc_ready = any(
-                    doc["id"] == processing_file["document_id"]
-                    for doc in (documents_ready_for_review.data or [])
-                    if processing_file.get("status") == "review_pending"
-                )
-                if doc_ready:
-                    continue  # Skip this processing file, show as document instead
+        # Process each document and create queue items with processing badges
+        for doc in documents_result.data or []:
+            processing_status = doc.get("processing_status", "uploaded")
 
-            # Create queue item for processing file
-            processing_status = processing_file["status"]
-
-            # Map processing status for display
+            # Map processing status for display and counting
             if processing_status in [
                 "uploaded",
-                "queued",
                 "extracting_text",
                 "analyzing_metadata",
                 "generating_embeddings",
-                "processing_complete",
             ]:
-                display_status = "processing"
                 total_processing += 1
+            elif processing_status == "ready_for_review":
+                total_pending += 1
             elif processing_status == "under_review":
-                display_status = "under_review"
                 total_in_progress += 1
-            elif processing_status in ["extraction_failed", "failed"]:
-                display_status = "failed"
-                total_failed += 1
-            elif processing_status == "duplicate":
-                display_status = "duplicate"
-                total_failed += 1  # Count duplicates as failed for UI purposes
-            else:
-                display_status = processing_status
-                total_processing += 1
+            # No failed counting since failed documents are deleted
 
+            # Get batch info from linked processing file for display
+            batch_id = None
+            try:
+                processing_file_result = await (
+                    client.table("processing_files")
+                    .select("batch_id")
+                    .eq("document_id", doc["id"])
+                    .limit(1)
+                    .execute()
+                )
+                if processing_file_result.data:
+                    batch_id = processing_file_result.data[0]["batch_id"]
+            except Exception as e:
+                logger.warning(f"Could not get batch_id for document {doc['id']}: {e}")
+
+            # Create simplified queue item - all documents, with processing badges
             queue_item = {
-                "id": processing_file["id"],  # Use processing file ID while in pipeline
-                "type": "processing_file",  # Distinguish from documents
-                "title": processing_file["original_filename"],  # Show filename as title
-                "original_filename": processing_file["original_filename"],
-                "doc_type": None,  # Not available until processed
-                "doc_category": None,  # Not available until processed
-                "confidence_score": None,  # Not available until processed
-                "processing_status": display_status,
-                "raw_processing_status": processing_status,
-                "uploaded_at": processing_file["created_at"],
-                "file_size": processing_file["file_size"],
-                "batch_id": processing_file["batch_id"],
-                # No metadata available yet
-                "summary": None,
-                "case_name": None,
-                "case_number": None,
-                "court": None,
-                "jurisdiction": None,
-                "practice_area": None,
-                "date": None,
-                "authors": None,
+                "id": doc["id"],  # Always use document ID
+                "type": "document",  # Always document type
+                "title": doc.get("title") or doc["original_filename"],
+                "original_filename": doc["original_filename"],
+                "doc_type": doc.get("doc_type"),
+                "doc_category": doc.get("doc_category"),
+                "confidence_score": doc.get("confidence_score"),
+                "processing_status": processing_status,  # Used for badges
+                "uploaded_at": doc["created_at"],
+                "file_size": doc["file_size"],
+                "batch_id": batch_id,
+                # Full metadata available
+                "preview_text": doc.get("preview_text"),
+                "summary": doc.get("summary"),
+                "case_name": doc.get("case_name"),
+                "case_number": doc.get("case_number"),
+                "court": doc.get("court"),
+                "jurisdiction": doc.get("jurisdiction"),
+                "practice_area": doc.get("practice_area"),
+                "date": doc.get("date"),
+                "authors": doc.get("authors"),
+                "keywords": doc.get("keywords"),
+                "tags": doc.get("tags"),
+                # Text metrics
+                "page_count": doc.get("page_count"),
+                "word_count": doc.get("word_count"),
+                "char_count": doc.get("char_count"),
+                "chunk_count": doc.get("chunk_count"),
             }
             queue_items.append(queue_item)
-
-        # Second, add documents ready for review (replace processing file entries)
-        for doc in documents_ready_for_review.data or []:
-            # Get the associated processing file for additional info
-            processing_files_for_doc = await (
-                client.table("processing_files")
-                .select("id, batch_id, status, created_at, file_size")
-                .eq("document_id", doc["id"])
-                .limit(1)
-                .execute()
-            )
-
-            processing_file = (
-                processing_files_for_doc.data[0] if processing_files_for_doc.data else None
-            )
-
-            # Only show if processing is complete and ready for review
-            if processing_file and processing_file["status"] == "review_pending":
-                display_status = "review_pending"
-                total_pending += 1
-
-                queue_item = {
-                    "id": doc["id"],  # Use document ID when ready for review
-                    "type": "document",  # Distinguish from processing files
-                    "title": doc["title"],
-                    "original_filename": doc["original_filename"],
-                    "doc_type": doc["doc_type"],
-                    "doc_category": doc["doc_category"],
-                    "confidence_score": doc["confidence_score"],
-                    "processing_status": display_status,
-                    "raw_processing_status": processing_file["status"],
-                    "uploaded_at": doc["created_at"],
-                    "file_size": doc["file_size"],
-                    "batch_id": processing_file["batch_id"],
-                    # Full metadata available for review
-                    "summary": doc.get("summary"),
-                    "case_name": doc.get("case_name"),
-                    "case_number": doc.get("case_number"),
-                    "court": doc.get("court"),
-                    "jurisdiction": doc.get("jurisdiction"),
-                    "practice_area": doc.get("practice_area"),
-                    "date": doc.get("date"),
-                    "authors": doc.get("authors"),
-                }
-                queue_items.append(queue_item)
 
         return {
             "queue": queue_items,
             "total_processing": total_processing,
             "total_pending": total_pending,
             "total_in_progress": total_in_progress,
-            "total_failed": total_failed,
+            "total_failed": 0,  # Failed documents are deleted, not tracked
             "total_documents": len(queue_items),
         }
 

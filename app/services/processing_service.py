@@ -40,6 +40,7 @@ class ProcessingService:
 
             # Update file status to queued
             await self._update_file_status(file_id, FileStatus.QUEUED)
+            await self._update_document_processing_status(file_id, "extracting_text")
 
             # Start background processing (fire and forget)
             logger.info(f"🔄 QUEUE: Creating async task for file {file_id}")
@@ -162,6 +163,7 @@ class ProcessingService:
                 raise ValueError(f"File path not found for file {file_id}")
 
             # Use LangChain processor for extraction, chunking, and embeddings
+            await self._update_document_processing_status(file_id, "generating_embeddings")
             try:
                 langchain_result = await langchain_processor.process_pdf_file(file_id, file_path)
             except Exception as e:
@@ -175,6 +177,7 @@ class ProcessingService:
             # Step 2: AI Metadata Extraction (still using our custom AI service)
             step_start = time.time()
             processing_logger.log_step("ai_metadata_start", file_id=file_id)
+            await self._update_document_processing_status(file_id, "analyzing_metadata")
             metadata_result = await self.ai_service.extract_metadata(file_id)
             step_duration = time.time() - step_start
 
@@ -202,6 +205,7 @@ class ProcessingService:
             await self._update_file_status(
                 file_id, FileStatus.REVIEW_PENDING, document_id=document_id
             )
+            await self._update_document_processing_status(file_id, "ready_for_review")
 
             # Check if batch is complete after this file finishes
             client = await db.get_supabase_client()
@@ -234,6 +238,11 @@ class ProcessingService:
             logger.error(
                 f"💥 PIPELINE FAILED: File {file_id} failed after {total_duration:.2f}s: {e}"
             )
+
+            # Instead of marking as failed, delete the document (cascades to chunks, etc.)
+            await self._delete_failed_document(file_id, error_message=str(e))
+
+            # Still update processing file status for tracking
             await self._update_file_status(
                 file_id, FileStatus.EXTRACTION_FAILED, error_message=str(e)
             )
@@ -299,7 +308,8 @@ class ProcessingService:
                 # Optional fields that exist in schema
                 "authors": ai_metadata.get("authors"),
                 "date": ai_metadata.get("date") or ai_metadata.get("publication_date"),
-                "description": ai_metadata.get("summary") or ai_metadata.get("description"),
+                "description": ai_metadata.get("description"),
+                "summary": ai_metadata.get("description"),  # Use AI description as summary
                 "case_name": case_name,
                 "case_number": ai_metadata.get("case_number"),
                 "court": ai_metadata.get("court"),
@@ -308,9 +318,12 @@ class ProcessingService:
                 "confidence_score": ai_metadata.get("confidence_score"),
                 "keywords": ai_metadata.get("keywords"),
                 "citation": ai_metadata.get("bluebook_citation"),
+                # Text metadata from extraction
+                "preview_text": file_record.get("preview_text"),
                 "page_count": file_record.get("page_count"),
                 "word_count": file_record.get("word_count"),
                 "char_count": file_record.get("char_count"),
+                "chunk_count": file_record.get("chunk_count"),
                 # Document ready for review - keep is_reviewed=False until human approval
                 "updated_at": datetime.utcnow().isoformat(),
             }
@@ -521,6 +534,73 @@ class ProcessingService:
         except Exception as e:
             logger.error(f"Failed to update file {file_id} status: {e}")
             raise
+
+    async def _update_document_processing_status(
+        self, file_id: str, processing_status: str, **kwargs
+    ):
+        """Update document processing status based on processing file ID."""
+        try:
+            client = await db.get_supabase_client()
+
+            # Get document_id from processing file
+            file_result = (
+                await client.table("processing_files")
+                .select("document_id")
+                .eq("id", file_id)
+                .limit(1)
+                .execute()
+            )
+            if not file_result.data:
+                raise ValueError(f"Processing file {file_id} not found")
+
+            document_id = file_result.data[0]["document_id"]
+            if not document_id:
+                raise ValueError(f"No document linked to processing file {file_id}")
+
+            # Update document with processing status
+            update_data = {
+                "processing_status": processing_status,
+                "updated_at": datetime.utcnow().isoformat(),
+                **kwargs,
+            }
+            await client.table("documents").update(update_data).eq("id", document_id).execute()
+            logger.info(f"Updated document {document_id} processing_status to {processing_status}")
+
+        except Exception as e:
+            logger.error(f"Failed to update document processing status for file {file_id}: {e}")
+            raise
+
+    async def _delete_failed_document(self, file_id: str, error_message: str = None):
+        """Delete document and associated data when processing fails."""
+        try:
+            client = await db.get_supabase_client()
+
+            # Get document_id from processing file
+            file_result = (
+                await client.table("processing_files")
+                .select("document_id")
+                .eq("id", file_id)
+                .limit(1)
+                .execute()
+            )
+            if not file_result.data:
+                logger.warning(
+                    f"Processing file {file_id} not found when trying to delete document"
+                )
+                return
+
+            document_id = file_result.data[0]["document_id"]
+            if not document_id:
+                logger.warning(f"No document linked to processing file {file_id}")
+                return
+
+            # Delete document - this will cascade to document_chunks, document_access, etc.
+            await client.table("documents").delete().eq("id", document_id).execute()
+            logger.info(f"Deleted failed document {document_id} and cascaded cleanup")
+
+        except Exception as e:
+            logger.error(f"Failed to delete document for failed file {file_id}: {e}")
+            # Don't re-raise - processing failure cleanup shouldn't fail the batch
 
     async def _update_batch_status(self, batch_id: str, status: BatchStatus, **kwargs):
         """Update batch processing status."""

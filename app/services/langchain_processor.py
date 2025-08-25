@@ -131,17 +131,32 @@ class LangChainDocumentProcessor:
             full_text = "\n".join([doc.page_content for doc in documents])
             text_length = len(full_text)
 
+            # Calculate metadata metrics
+            page_count = len(documents)
+            word_count = len(full_text.split())
+            char_count = len(full_text)
+            preview_text = full_text[:1500] + "..." if len(full_text) > 1500 else full_text
+
             processing_logger.log_step(
                 "pdf_loading_complete",
                 file_id=file_id,
-                pages_loaded=len(documents),
+                pages_loaded=page_count,
                 text_length=text_length,
+                word_count=word_count,
             )
 
-            # Step 2: Update processing file with extracted text
-            await self._update_file_status(
-                file_id, FileStatus.ANALYZING_METADATA, extracted_text=full_text
-            )
+            # Step 2: Update processing file with extracted text and metadata
+            client = await db.get_supabase_client()
+            await client.table("processing_files").update(
+                {
+                    "extracted_text": full_text,
+                    "page_count": page_count,
+                    "word_count": word_count,
+                    "char_count": char_count,
+                    "preview_text": preview_text,
+                    "status": FileStatus.ANALYZING_METADATA.value,
+                }
+            ).eq("id", file_id).execute()
 
             # Step 3: Split documents using RecursiveCharacterTextSplitter
             processing_logger.log_step("text_splitting_start", file_id=file_id)

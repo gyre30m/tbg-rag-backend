@@ -126,12 +126,22 @@ class UploadFileInfo(BaseModel):
         return v
 
 
+class FailedFileInfo(BaseModel):
+    """Information about a failed file upload."""
+
+    filename: str
+    error: str
+    is_duplicate: Optional[bool] = False
+    existing_document_id: Optional[UUID] = None
+    existing_processing_file_id: Optional[UUID] = None
+
+
 class UploadResponse(BaseModel):
     """Response from file upload endpoint."""
 
     job_id: UUID
     uploaded_files: List[UUID]
-    failed_files: List[Dict[str, str]]
+    failed_files: List[FailedFileInfo]
     total_files: int
     success_count: int
     error_count: int
