@@ -437,27 +437,60 @@ Return ONLY valid JSON with no additional text or formatting:
         return validated
 
     async def _save_metadata(self, file_id: str, metadata: Dict[str, Any]):
-        """Save extracted metadata to database."""
+        """Save extracted metadata directly to documents table."""
         try:
+            client = await db.get_supabase_client()
+
+            # Get the document_id from processing file
+            file_result = await (
+                client.table("processing_files")
+                .select("document_id")
+                .eq("id", file_id)
+                .limit(1)
+                .execute()
+            )
+
+            if not file_result.data or not file_result.data[0]["document_id"]:
+                raise ValueError(f"No document linked to processing file {file_id}")
+
+            document_id = file_result.data[0]["document_id"]
+
+            # Extract case info from pattern-extracted case_citations if available
+            case_name = metadata.get("case_name")
+            if not case_name and metadata.get("case_citations"):
+                # Use the first case citation as case_name
+                case_name = (
+                    metadata["case_citations"][0]
+                    if isinstance(metadata["case_citations"], list)
+                    else metadata["case_citations"]
+                )
+
+            # Save metadata directly to documents table
             update_data = {
-                "ai_title": metadata["title"],
-                "ai_authors": metadata["authors"],
-                "ai_publication_date": metadata["publication_date"],
-                "ai_doc_type": metadata["doc_type"],
-                "ai_doc_category": metadata["doc_category"],
-                "ai_description": metadata["description"],
-                "ai_keywords": metadata["keywords"],
-                "ai_bluebook_citation": metadata.get("case_citations")
-                or metadata["bluebook_citation"],
-                "ai_confidence_scores": metadata["confidence_scores"],
-                # Add pattern-extracted fields
-                "ai_court": metadata.get("court"),
-                "ai_identified_amounts": metadata.get("identified_amounts"),
-                "ai_identified_rates": metadata.get("identified_rates"),
+                "title": metadata["title"],
+                "authors": metadata["authors"],
+                "date": metadata.get("publication_date"),
+                "doc_type": metadata["doc_type"],
+                "doc_category": metadata["doc_category"],
+                "description": metadata["description"],
+                "summary": metadata["description"],  # Use description as summary
+                "keywords": metadata["keywords"],
+                "citation": metadata.get("case_citations") or metadata.get("bluebook_citation"),
+                "confidence_score": metadata.get("confidence_scores", {}).get("overall", 0.5),
+                # Forensic economics specific fields
+                "case_name": case_name,
+                "case_number": metadata.get("case_number"),
+                "court": metadata.get("court"),
+                "jurisdiction": metadata.get("jurisdiction"),
+                "practice_area": metadata.get("practice_area"),
+                "updated_at": datetime.utcnow().isoformat(),
             }
 
-            client = await db.get_supabase_client()
-            await client.table("processing_files").update(update_data).eq("id", file_id).execute()
+            # Remove None values to avoid overwriting existing data with nulls
+            update_data = {k: v for k, v in update_data.items() if v is not None}
+
+            await client.table("documents").update(update_data).eq("id", document_id).execute()
+            logger.info(f"Saved metadata directly to document {document_id}")
 
         except Exception as e:
             logger.error(f"Failed to save metadata for file {file_id}: {e}")

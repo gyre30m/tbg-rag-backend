@@ -193,10 +193,10 @@ class ProcessingService:
                 "ai_metadata_complete", file_id=file_id, duration_seconds=step_duration
             )
 
-            # Step 3: Update document record with AI metadata
-            # (LangChain already handled extraction, chunking, and embeddings)
-            logger.info(f"📄 STEP 3: Updating document record with AI metadata for file {file_id}")
-            document_id = await self._update_document_with_metadata(
+            # Step 3: Update document record with text metrics
+            # (AI service already saved metadata directly to documents)
+            logger.info(f"📄 STEP 3: Updating document record with text metrics for file {file_id}")
+            document_id = await self._update_document_with_text_metrics(
                 file_id, metadata_result.get("metadata", {})
             )
 
@@ -206,6 +206,11 @@ class ProcessingService:
                 file_id, FileStatus.REVIEW_PENDING, document_id=document_id
             )
             await self._update_document_processing_status(file_id, "ready_for_review")
+
+            # Clean up processing_files to save storage
+            # Remove large fields that are no longer needed
+            logger.info(f"🧹 Cleaning up processing_files record {file_id}")
+            await self._cleanup_processing_file(file_id)
 
             # Check if batch is complete after this file finishes
             client = await db.get_supabase_client()
@@ -263,11 +268,12 @@ class ProcessingService:
 
             return {"success": False, "file_id": file_id, "error": str(e)}
 
-    async def _update_document_with_metadata(
+    async def _update_document_with_text_metrics(
         self, file_id: str, ai_metadata: Dict[str, Any]
     ) -> str:
         """
-        Update existing document record with AI-extracted metadata.
+        Update document with text metrics from langchain processing.
+        Note: AI metadata is now saved directly to documents by AI service.
 
         Args:
             file_id: Processing file ID
@@ -280,53 +286,34 @@ class ProcessingService:
             # Get processing file record and its document
             client = await db.get_supabase_client()
             file_result = (
-                await client.table("processing_files").select("*").eq("id", file_id).execute()
+                await client.table("processing_files")
+                .select("document_id")
+                .eq("id", file_id)
+                .execute()
             )
 
             if not file_result.data:
                 raise ValueError(f"Processing file {file_id} not found")
 
-            file_record = file_result.data[0]
-            document_id = file_record.get("document_id")
+            document_id = file_result.data[0].get("document_id")
 
             if not document_id:
                 raise ValueError(f"No document linked to processing file {file_id}")
 
-            # Update document record with AI-extracted metadata
-            # Only use columns that exist in actual database schema
-            # Extract case info from pattern-extracted case_citations if available
-            case_name = ai_metadata.get("case_name")
-            if not case_name and ai_metadata.get("case_citations"):
-                # Use the first case citation as case_name
-                case_name = ai_metadata["case_citations"][0]
-
+            # Only update text metrics from langchain processor
+            # AI metadata is saved directly by AI service now
             document_update_data = {
-                # Update title if AI found a better one
-                "title": ai_metadata.get("title") or file_record["original_filename"],
-                "doc_type": ai_metadata.get("doc_type") or "other",
-                "doc_category": ai_metadata.get("doc_category") or "Other",
-                # Optional fields that exist in schema
-                "authors": ai_metadata.get("authors"),
-                "date": ai_metadata.get("date") or ai_metadata.get("publication_date"),
-                "description": ai_metadata.get("description"),
-                "summary": ai_metadata.get("description"),  # Use AI description as summary
-                "case_name": case_name,
-                "case_number": ai_metadata.get("case_number"),
-                "court": ai_metadata.get("court"),
-                "jurisdiction": ai_metadata.get("jurisdiction"),
-                "practice_area": ai_metadata.get("practice_area"),
-                "confidence_score": ai_metadata.get("confidence_score"),
-                "keywords": ai_metadata.get("keywords"),
-                "citation": ai_metadata.get("bluebook_citation"),
-                # Text metadata from extraction (passed via ai_metadata from langchain processor)
+                # Text metadata from extraction
                 "preview_text": ai_metadata.get("preview_text"),
                 "page_count": ai_metadata.get("page_count"),
                 "word_count": ai_metadata.get("word_count"),
                 "char_count": ai_metadata.get("char_count"),
                 "chunk_count": ai_metadata.get("chunk_count"),
-                # Document ready for review - keep is_reviewed=False until human approval
                 "updated_at": datetime.utcnow().isoformat(),
             }
+
+            # Remove None values to avoid overwriting existing data
+            document_update_data = {k: v for k, v in document_update_data.items() if v is not None}
 
             # Update the existing document record
             document_result = (
@@ -601,6 +588,30 @@ class ProcessingService:
         except Exception as e:
             logger.error(f"Failed to delete document for failed file {file_id}: {e}")
             # Don't re-raise - processing failure cleanup shouldn't fail the batch
+
+    async def _cleanup_processing_file(self, file_id: str):
+        """Clean up processing_files record after successful processing to save storage."""
+        try:
+            client = await db.get_supabase_client()
+
+            # Clear large fields that are no longer needed
+            # Keep audit fields like batch_id, status, timestamps
+            cleanup_data = {
+                "extracted_text": None,  # This is the largest field
+                "preview_text": None,  # Now stored in documents
+                "page_count": None,  # Now stored in documents
+                "word_count": None,  # Now stored in documents
+                "char_count": None,  # Now stored in documents
+                "chunk_count": None,  # Now stored in documents
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+
+            await client.table("processing_files").update(cleanup_data).eq("id", file_id).execute()
+            logger.info(f"Cleaned up processing_files record {file_id} to save storage")
+
+        except Exception as e:
+            logger.warning(f"Failed to cleanup processing_files {file_id}: {e}")
+            # Don't fail the processing if cleanup fails
 
     async def _update_batch_status(self, batch_id: str, status: BatchStatus, **kwargs):
         """Update batch processing status."""
